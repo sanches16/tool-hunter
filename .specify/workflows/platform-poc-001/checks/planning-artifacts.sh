@@ -27,6 +27,17 @@ if [ "$stage" = "tasks" ]; then
   dupes="$(grep -oE '^- \[[ xX]\] T[0-9]{3}' "$tasks" | grep -oE 'T[0-9]{3}' | sort | uniq -d)"
   [ -z "$dupes" ] || fail "duplicate task ids: $dupes"
   pass "tasks.md has $count uniquely numbered tasks"
+
+  # Role boundary: workflow-owned obligations live in a non-checkbox section,
+  # and no checkbox task may perform workflow-only actions.
+  grep -qE '^## Workflow-owned verification and human obligations' "$tasks" \
+    || fail "tasks.md lacks the 'Workflow-owned verification and human obligations' section"
+  section_boxes="$(awk '/^## Workflow-owned verification and human obligations/{f=1;next} /^## /{f=0} f && /^- \[[ xX]\]/' "$tasks")"
+  [ -z "$section_boxes" ] || { echo "$section_boxes"; fail "checkbox tasks inside the workflow-owned section"; }
+  if grep -nE '^- \[ \] T[0-9]{3}' "$tasks" | grep -iE '\bgit push\b|\bgh run (watch|view|list)\b|speckit[-.]converge'; then
+    fail "unchecked implementation tasks require workflow-only actions (above)"
+  fi
+  pass "workflow-owned obligations separated from implementer checkbox tasks"
 fi
 
 # Scope guard: planning must not pull in excluded PoC scope. Lines that state

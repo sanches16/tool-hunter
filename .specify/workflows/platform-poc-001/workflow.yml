@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "platform-poc-001"
   name: "PLATFORM-POC-001 remainder (after HUMAN GATE #1)"
-  version: "1.2.2"
+  version: "1.2.3"
   author: "sanches16"
   description: >-
     Plan → tasks → analyze → implement → deterministic verification → CI →
@@ -188,8 +188,12 @@ steps:
       args: >-
         Feature directory: specs/001-foundation-health. Generate tasks from the
         approved plan (HUMAN GATE #2A). Every task must trace to a requirement or
-        acceptance criterion; include lint, typecheck, test, build, Docker Compose
-        and GitHub Actions tasks. No out-of-scope work. Do not modify anything under
+        acceptance criterion. No out-of-scope work. Follow the binding rules in
+        .specify/workflows/platform-poc-001/prompts/tasks-rules.md: checkbox tasks
+        are implementer file edits only; workflow-owned verification and human
+        obligations go in the non-checkbox traceability section; T001 alone owns
+        package.json; T010 cleanup parameters as stated there. Do not modify spec.md,
+        the constitution, plan artifacts, HUMAN_GATE files or anything under
         .specify/workflows/.
 
   - id: guard-tasks
@@ -204,7 +208,11 @@ steps:
     command: speckit.analyze
     integration: codex
     input:
-      args: "Feature directory: specs/001-foundation-health. Read-only cross-artifact analysis."
+      args: >-
+        Feature directory: specs/001-foundation-health. Read-only cross-artifact
+        analysis, including the checks in
+        .specify/workflows/platform-poc-001/prompts/analyze-rules.md. Report each of
+        those checks as PASS or FINDING.
 
   - id: guard-analyze
     type: shell
@@ -261,8 +269,10 @@ steps:
         plan.md, the constitution or anything under .specify/workflows/. No catalog, Avito,
         auth, backup, orchestration or other out-of-scope work. Write
         specs/001-foundation-health/reviews/IMPLEMENTATION_REPORT.md listing completed
-        task ids, what the workflow should verify, and every deviation. Do not commit.
-        Stop after implementation.
+        task ids, what the workflow should verify, and every deviation. Do not create
+        package-lock.json (the workflow generates it). The non-checkbox
+        "Workflow-owned verification and human obligations" section is not yours to
+        perform. Do not commit. Stop after implementation.
 
   - id: guard-implement
     type: shell

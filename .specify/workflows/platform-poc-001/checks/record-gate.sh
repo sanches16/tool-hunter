@@ -5,6 +5,9 @@
 source "$(dirname "$0")/lib.sh"
 stem="${1:?}"; title="${2:?}"; choice="${3:?}"; run_id="${4:?}"; vname="${5:?}"; vvalue="${6:-}"
 file="$REVIEWS_DIR/$stem.md"
+# Never overwrite an earlier decision for the same gate (e.g. a rejected
+# candidate); later decisions get the run id in the file name.
+[ -e "$file" ] && file="$REVIEWS_DIR/${stem}_${run_id}.md"
 mkdir -p "$REVIEWS_DIR"
 
 [ -z "$(git status --porcelain)" ] || { git status --short; fail "uncommitted changes at gate time; reviewed state must be a pushed commit"; }
