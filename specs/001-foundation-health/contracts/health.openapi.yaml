@@ -1,0 +1,84 @@
+openapi: 3.1.0
+info:
+  title: PLATFORM-POC-001 Foundation Health
+  version: 1.0.0
+  description: >-
+    Each GET performs a fresh SQL operation against the configured PostgreSQL database.
+    Every handled request must finish within five seconds in the local verification environment.
+    No authentication, domain data, cached observations, or diagnostic details are exposed.
+servers:
+  - url: http://localhost:3000
+paths:
+  /api/health:
+    get:
+      operationId: getFoundationHealth
+      summary: Observe application and current database health
+      description: >-
+        SELECT 1 must complete successfully within the shared probe deadline.
+        Missing or invalid configuration, refused connection, authentication failure,
+        failed query, or timeout returns 503. Earlier successes cannot be reused.
+        Restored database connectivity is observable without application restart.
+        If the application is stopped, no HTTP health response is available.
+      responses:
+        '200':
+          description: Application handled this request and its database operation succeeded.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Healthy'
+              example:
+                status: ok
+                application: ok
+                database: ok
+        '503':
+          description: Application handled this request but could not verify database availability.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Unavailable'
+              example:
+                status: degraded
+                application: ok
+                database: unavailable
+components:
+  schemas:
+    Healthy:
+      type: object
+      additionalProperties: false
+      required: [status, application, database]
+      properties:
+        status:
+          type: string
+          const: ok
+        application:
+          type: string
+          const: ok
+        database:
+          type: string
+          const: ok
+    Unavailable:
+      type: object
+      additionalProperties: false
+      required: [status, application, database]
+      properties:
+        status:
+          type: string
+          const: degraded
+        application:
+          type: string
+          const: ok
+        database:
+          type: string
+          const: unavailable
