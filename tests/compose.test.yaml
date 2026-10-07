@@ -1,5 +1,6 @@
 # Isolated test fixture (T008 subset, Iteration D2B): production-mode `app` + PostgreSQL 17 `db`;
-# plus the profile-gated silent-listener scenario (Iteration D2C1, see the section below).
+# plus the profile-gated silent-listener (Iteration D2C1) and config-fault (Iteration D2C2)
+# scenarios, see the sections below.
 # Standalone from the developer `compose.yaml`. Used only by tests/integration/health.test.mjs, which
 # runs it under a unique `-p` project name per run, generates ephemeral DB/user/password values and
 # passes them only through the child-process environment, then removes the project with
@@ -101,6 +102,39 @@ services:
       stalled-postgres:
         condition: service_healthy
         restart: false
+    restart: "no"
+    healthcheck:
+      # HTTP server liveness only (static page); independent of the database.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+
+  # --- Runtime configuration faults (T010 configuration part, Iteration D2C2) --------------------
+  # Profile-gated: never started by the default (D2B) or silent-listener selections. The
+  # configuration-fault suite builds and recreates only `app-config` with `--profile config-fault`
+  # in its own project. No database service and no depends_on: configuration rejection must happen
+  # before any connection attempt.
+  #
+  # The POSTGRES_* variables come ONLY from the per-scenario env file named by
+  # CONFIG_FAULT_ENV_FILE (written by the test into an owned temporary directory), so a variable can
+  # be truly absent (key omitted) or empty (`KEY=`). They are deliberately not taken from the Compose
+  # process environment: the `${...:?}` interpolations above apply to the whole file, so that
+  # environment must keep valid values. Default /dev/null = no variables when the profile is unused.
+
+  app-config:
+    profiles: [config-fault]
+    # Same production Dockerfile/runtime stage as `app`; only the runtime configuration differs.
+    build:
+      context: ..
+    env_file: ${CONFIG_FAULT_ENV_FILE:-/dev/null}
+    ports:
+      - "127.0.0.1::3000"
     restart: "no"
     healthcheck:
       # HTTP server liveness only (static page); independent of the database.

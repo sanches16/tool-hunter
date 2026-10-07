@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
@@ -25,8 +28,9 @@ import {
 // Focused, deterministic checks of the Iteration B probe through its code-level client injection
 // interface (T011) and self-tests of the shared HTTP assertions (T006) use no Docker, PostgreSQL,
 // HTTP server or network. The real-container suites run the 10 healthy -> 10 database-loss -> 10
-// recovery lifecycle against the production image and PostgreSQL 17 (T008/T009 subset), and 5
-// repeated requests against a silent PostgreSQL listener with socket-cleanup checks (T007/T010 subset).
+// recovery lifecycle against the production image and PostgreSQL 17 (T008/T009 subset), 5
+// repeated requests against a silent PostgreSQL listener with socket-cleanup checks (T007/T010 subset),
+// and 12 missing/empty/invalid runtime-configuration scenarios without any database (T010 subset).
 
 const VALID_ENV = Object.freeze({
   POSTGRES_HOST: "db.internal",
@@ -951,12 +955,12 @@ function formatSafeState(text) {
 }
 
 /**
- * Failure-only, bounded and non-throwing: one sanitized line per silent-scenario service.
+ * Failure-only, bounded and non-throwing: one sanitized line per scenario service.
  * Container IDs, env, compose config, logs and healthcheck output are never included.
  */
-async function silentStartupDiagnostics(fixture) {
+async function silentStartupDiagnostics(fixture, services = SILENT_SERVICES) {
   const lines = [];
-  for (const service of SILENT_SERVICES) {
+  for (const service of services) {
     try {
       const output = await compose(
         fixture,
@@ -1224,6 +1228,225 @@ describe("silent PostgreSQL dependency (production image + stalled listener)", (
             primaryError = cleanupError;
           } else {
             t.diagnostic("owned fixture cleanup also failed");
+          }
+        }
+      }
+      if (primaryError !== undefined) {
+        throw primaryError;
+      }
+    },
+  );
+});
+
+// --- Runtime configuration faults (configuration part of T010) ---------------------------------
+//
+// A separate owned project with profile `config-fault`: only the production app image
+// (`app-config`), no database service. The image is built once; each scenario then recreates only
+// `app-config` with its own POSTGRES_* set, written to an owned temporary env file (0600) that
+// omits a key (missing) or writes `KEY=` (empty). Same ownership, failure, cleanup and output rules
+// as the suites above; only scenario names and timings are reported, never values.
+
+const CONFIG_FAULT_PROFILE_ARGS = Object.freeze(["--profile", "config-fault"]);
+const CONFIG_FAULT_SERVICE = "app-config";
+/**
+ * Configuration rejection happens before any connection attempt, so a fault answer must arrive far
+ * below the 4,000 ms probe budget (and the 5,000 ms HTTP limit).
+ */
+const CONFIG_FAULT_LIMIT_MS = 1_000;
+const MISSING = null;
+const CONFIG_FAULT_SCENARIOS = Object.freeze([
+  ["missing POSTGRES_HOST", "POSTGRES_HOST", MISSING],
+  ["empty POSTGRES_HOST", "POSTGRES_HOST", ""],
+  ["missing POSTGRES_DB", "POSTGRES_DB", MISSING],
+  ["empty POSTGRES_DB", "POSTGRES_DB", ""],
+  ["missing POSTGRES_USER", "POSTGRES_USER", MISSING],
+  ["empty POSTGRES_USER", "POSTGRES_USER", ""],
+  ["missing POSTGRES_PASSWORD", "POSTGRES_PASSWORD", MISSING],
+  ["empty POSTGRES_PASSWORD", "POSTGRES_PASSWORD", ""],
+  ["missing POSTGRES_PORT", "POSTGRES_PORT", MISSING],
+  ["empty POSTGRES_PORT", "POSTGRES_PORT", ""],
+  ["invalid POSTGRES_PORT syntax", "POSTGRES_PORT", "abc"],
+  ["out-of-range POSTGRES_PORT", "POSTGRES_PORT", "70000"],
+]);
+/**
+ * Runs inside the app container and reports only through its exit status (0 = environment matches
+ * the scenario): each key must be "missing" (absent), "empty", "set" (non-empty) or `{ equals }`.
+ */
+const ENV_SHAPE_CHECK =
+  "const spec = JSON.parse(process.argv[1]);" +
+  "const ok = Object.entries(spec).every(([key, want]) => {" +
+  "  const has = Object.hasOwn(process.env, key);" +
+  "  if (want === 'missing') return !has;" +
+  "  if (want === 'empty') return has && process.env[key] === '';" +
+  "  if (want === 'set') return has && process.env[key] !== '';" +
+  "  return has && process.env[key] === want.equals;" +
+  "});" +
+  "process.exit(ok ? 0 : 1);";
+
+/** Valid generated baseline with exactly one variable faulted; `MISSING` omits the key. */
+function configFaultScenario(fixture, key, faultValue) {
+  const values = {
+    POSTGRES_HOST: "db",
+    POSTGRES_PORT: "5432",
+    POSTGRES_DB: fixture.env.POSTGRES_DB,
+    POSTGRES_USER: fixture.env.POSTGRES_USER,
+    POSTGRES_PASSWORD: fixture.env.POSTGRES_PASSWORD,
+  };
+  const lines = [];
+  const shape = {};
+  for (const [name, value] of Object.entries(values)) {
+    if (name !== key) {
+      lines.push(`${name}=${value}`);
+      shape[name] = "set";
+    } else if (faultValue === MISSING) {
+      shape[name] = "missing";
+    } else {
+      lines.push(`${name}=${faultValue}`);
+      // Only the deliberately invalid non-secret port values are compared literally.
+      shape[name] = faultValue === "" ? "empty" : { equals: faultValue };
+    }
+  }
+  return { envFileText: `${lines.join("\n")}\n`, shape };
+}
+
+describe("runtime configuration faults (production image, no database)", () => {
+  test(
+    "12 missing/empty/invalid POSTGRES_* scenarios -> exact 503 well under the probe budget, app keeps running",
+    { timeout: LIFECYCLE_TIMEOUT_MS },
+    async (t) => {
+      const fixture = createFixture("toolhunter-d2c2", CONFIG_FAULT_PROFILE_ARGS);
+      let owned = false;
+      let envDir;
+      let primaryError;
+
+      try {
+        // Missing Docker or Compose is a hard failure, never a skip.
+        await docker(
+          fixture,
+          ["compose", "version"],
+          "Docker/Compose availability check (required; this test never skips)",
+          COMPOSE_CHECK_TIMEOUT_MS,
+        );
+
+        envDir = await mkdtemp(join(tmpdir(), "toolhunter-d2c2-"));
+        const envFile = join(envDir, "app-config.env");
+        // Starts with no variables until the first scenario writes its own set.
+        await writeFile(envFile, "", { mode: 0o600 });
+        fixture.env.CONFIG_FAULT_ENV_FILE = envFile;
+
+        owned = true;
+        // Phase 1: image build only, once for all scenarios.
+        await compose(
+          fixture,
+          ["build", CONFIG_FAULT_SERVICE],
+          "config-fault startup phase 1/2 (build app-config image)",
+          COMPOSE_UP_TIMEOUT_MS,
+        );
+
+        let maxElapsedMs = 0;
+        for (const [name, key, faultValue] of CONFIG_FAULT_SCENARIOS) {
+          await withContext(`config-fault ${name}`, async () => {
+            const { envFileText, shape } = configFaultScenario(fixture, key, faultValue);
+            await writeFile(envFile, envFileText, { mode: 0o600 });
+
+            // Phase 2 (per scenario): recreate only app-config with this environment. Fail-fast,
+            // no retry; on failure only the sanitized service state is added.
+            try {
+              await compose(
+                fixture,
+                [
+                  "up",
+                  "-d",
+                  "--no-build",
+                  "--force-recreate",
+                  "--wait",
+                  "--wait-timeout",
+                  String(COMPOSE_WAIT_TIMEOUT_S),
+                  CONFIG_FAULT_SERVICE,
+                ],
+                "config-fault startup phase 2/2 (recreate + bounded wait)",
+                SILENT_START_TIMEOUT_MS,
+              );
+            } catch (startError) {
+              const report = await silentStartupDiagnostics(fixture, [CONFIG_FAULT_SERVICE]);
+              throw new assert.AssertionError({
+                message: `${startError instanceof Error ? startError.message : "startup failed"}; sanitized service state: ${report}`,
+              });
+            }
+
+            const appId = await containerId(fixture, CONFIG_FAULT_SERVICE);
+            const projectContainers = await compose(
+              fixture,
+              ["ps", "--all", "-q"],
+              "list owned project containers",
+            );
+            assert.deepEqual(
+              projectContainers.split(/\s+/).filter((id) => id !== ""),
+              [appId],
+              "only the app-config container may exist (no database is started)",
+            );
+            const appState = await containerState(fixture, appId, "inspect app container");
+            assert.equal(appState.running, true, "app container is not running after startup");
+            assert.ok(appState.startedAt.length > 0, "app container StartedAt is missing");
+            const identity = { id: appId, startedAt: appState.startedAt };
+
+            // The container really has the scenario's missing/empty/invalid variable (exit status only).
+            await docker(
+              fixture,
+              ["exec", appId, "node", "-e", ENV_SHAPE_CHECK, JSON.stringify(shape)],
+              "container environment does not match the scenario",
+              COMPOSE_STEP_TIMEOUT_MS,
+            );
+
+            const baseUrl = await appHttpBaseUrl(fixture, CONFIG_FAULT_SERVICE);
+            const { response, elapsedMs } = await timedHealthRequest(baseUrl);
+            // Exact HTTP 503 degraded/ok/unavailable + no-store, <=5000 ms monotonic.
+            await assertUnavailableResponse(response, { elapsedMs });
+            assert.ok(
+              elapsedMs < CONFIG_FAULT_LIMIT_MS,
+              `answer took ${Math.round(elapsedMs)} ms; configuration faults must not wait for the ${PROBE_BUDGET_MS} ms probe budget`,
+            );
+
+            await assertSameRunningApp(fixture, identity, "after the request", CONFIG_FAULT_SERVICE);
+            await assertNoCrashEvidence(fixture, appId);
+            maxElapsedMs = Math.max(maxElapsedMs, elapsedMs);
+            t.diagnostic(`config-fault ${name}: exact HTTP 503 in ${Math.round(elapsedMs)} ms`);
+          });
+        }
+        t.diagnostic(
+          `config-fault: ${CONFIG_FAULT_SCENARIOS.length}/${CONFIG_FAULT_SCENARIOS.length} exact HTTP 503 ` +
+            `(max ${Math.round(maxElapsedMs)} ms, limit ${CONFIG_FAULT_LIMIT_MS} ms)`,
+        );
+      } catch (error) {
+        primaryError = error;
+      }
+
+      // Always runs, on success and on every failure path: removes only this run's containers,
+      // network and locally built image, then the owned temporary env file directory.
+      if (owned) {
+        try {
+          await compose(
+            fixture,
+            ["down", "-v", "--remove-orphans", "--rmi", "local", "--timeout", "5"],
+            "owned fixture cleanup",
+            COMPOSE_DOWN_TIMEOUT_MS,
+          );
+        } catch (cleanupError) {
+          if (primaryError === undefined) {
+            primaryError = cleanupError;
+          } else {
+            t.diagnostic("owned fixture cleanup also failed");
+          }
+        }
+      }
+      if (envDir !== undefined) {
+        try {
+          await rm(envDir, { recursive: true, force: true });
+        } catch {
+          if (primaryError === undefined) {
+            primaryError = new assert.AssertionError({ message: "owned env file cleanup failed" });
+          } else {
+            t.diagnostic("owned env file cleanup also failed");
           }
         }
       }
