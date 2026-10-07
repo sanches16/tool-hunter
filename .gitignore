@@ -1,0 +1,10 @@
+# Secrets: never commit real env files (only .env.example)
+.env
+.env.*
+!.env.example
+
+# Machine-local agent settings
+.claude/settings.local.json
+
+# macOS
+.DS_Store
