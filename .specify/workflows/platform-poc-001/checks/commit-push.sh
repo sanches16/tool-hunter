@@ -13,9 +13,17 @@ if [ -n "$only" ]; then
   outside="$(git status --porcelain | awk '{print $NF}' | grep -vxF "$only" || true)"
   [ -z "$outside" ] || { echo "$outside"; fail "changes outside $only"; }
 fi
+# After commit + push the tree must be clean and HEAD must exist on GitHub.
+verify_pushed() {
+  [ -z "$(git status --porcelain)" ] || { git status --short; fail "working tree not clean after commit"; }
+  git fetch -q origin "$POC_BRANCH"
+  [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$POC_BRANCH")" ] || fail "HEAD is not on origin/$POC_BRANCH"
+}
+
 git add -A
 if [ -z "$(git diff --cached --name-only)" ]; then
-  pass "nothing to commit"
+  verify_pushed
+  pass "nothing to commit; HEAD $(git rev-parse --short HEAD) is on origin"
   exit 0
 fi
 
@@ -38,4 +46,5 @@ git diff --cached --check || echo "WARNING: whitespace issues in staged changes 
 git diff --cached --stat
 git commit -q -m "$msg"
 git push -q origin "$POC_BRANCH"
+verify_pushed
 pass "committed and pushed $(git rev-parse --short HEAD): $msg"

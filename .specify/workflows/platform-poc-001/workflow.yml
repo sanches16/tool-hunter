@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "platform-poc-001"
   name: "PLATFORM-POC-001 remainder (after HUMAN GATE #1)"
-  version: "1.1.0"
+  version: "1.2.0"
   author: "sanches16"
   description: >-
     Plan → tasks → analyze → implement → deterministic verification → CI →
@@ -20,7 +20,36 @@ requires:
       - "codex"
       - "claude"
 
+# Human verdicts. Always empty at `run`; the owner's explicit decision is passed
+# only on `specify workflow resume <run_id> --input <name>=<value>`. With an
+# empty verdict and no TTY, the gate pauses the run.
+inputs:
+  gate_2a_verdict:
+    type: string
+    default: ""
+    enum: ["", "approve", "reject"]
+    prompt: "HUMAN GATE 2A (plan) verdict, set only from the owner's explicit decision"
+  gate_2b_verdict:
+    type: string
+    default: ""
+    enum: ["", "approve", "reject"]
+    prompt: "HUMAN GATE 2B (tasks/analyze) verdict, set only from the owner's explicit decision"
+  converge_verdict:
+    type: string
+    default: ""
+    enum: ["", "accept", "repair", "abort"]
+    prompt: "Convergence gate verdict, set only from the owner's explicit decision"
+  final_verdict:
+    type: string
+    default: ""
+    enum: ["", "approve", "request-changes", "abort"]
+    prompt: "FINAL HUMAN GATE verdict, set only from the owner's explicit decision"
+
 # Conventions
+# - Before every gate the reviewed state is a clean commit already pushed to
+#   GitHub (candidate commits for 2A/2B; <gate>-ready verifies it).
+# - Gates take their verdict from the matching input (verdict_input); with an
+#   empty input and no TTY the run pauses until resumed with the owner's decision.
 # - Every gate uses on_reject: skip so the choice always reaches the next step:
 #   <gate> → <gate>-record (commit + push the decision) → <gate>-enforce
 #   (continue, or exit non-zero to stop). A stopped run cannot be resumed past
@@ -35,6 +64,10 @@ steps:
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/preflight.sh"'
     timeout: 120
+
+  - id: verdicts-empty-at-start
+    type: shell
+    run: 'v="{{ inputs.gate_2a_verdict }}{{ inputs.gate_2b_verdict }}{{ inputs.converge_verdict }}{{ inputs.final_verdict }}"; if [ -z "$v" ]; then echo "PASS: no gate verdict pre-supplied"; else echo "STOP: gate verdicts may only be passed on resume at the paused gate" >&2; exit 1; fi'
 
   - id: workflow-baseline
     type: shell
@@ -65,6 +98,14 @@ steps:
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/planning-artifacts.sh" plan'
 
+  - id: plan-candidate-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: candidate plan artifacts for HUMAN GATE 2A (run {{ context.run_id }})"'
+
+  - id: gate-2a-ready
+    type: shell
+    run: 'if [ -n "{{ inputs.gate_2a_verdict }}" ]; then echo "STOP: gate_2a_verdict was set before GATE 2A was reached" >&2; exit 1; fi; [ -z "$(git status --porcelain)" ] && git fetch -q origin poc/platform-poc-001 && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/poc/platform-poc-001)" ] && echo "PASS: GATE 2A reviews pushed commit $(git rev-parse HEAD)" || { echo "STOP: reviewed state is not a clean pushed commit" >&2; exit 1; }'
+
   - id: gate-2a
     type: gate
     message: >-
@@ -74,10 +115,11 @@ steps:
     show_file: specs/001-foundation-health/plan.md
     options: [approve, reject]
     on_reject: skip
+    verdict_input: gate_2a_verdict
 
   - id: gate-2a-record
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2A "HUMAN GATE 2A plan review" "{{ steps.gate-2a.output.choice }}" "{{ context.run_id }}"'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2A "HUMAN GATE 2A plan review" "{{ steps.gate-2a.output.choice }}" "{{ context.run_id }}" gate_2a_verdict "{{ inputs.gate_2a_verdict }}"'
 
   - id: gate-2a-enforce
     type: shell
@@ -117,6 +159,14 @@ steps:
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" ANALYZE "{{ context.run_id }}"'
 
+  - id: tasks-candidate-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: candidate tasks and analyze report for HUMAN GATE 2B (run {{ context.run_id }})"'
+
+  - id: gate-2b-ready
+    type: shell
+    run: 'if [ -n "{{ inputs.gate_2b_verdict }}" ]; then echo "STOP: gate_2b_verdict was set before GATE 2B was reached" >&2; exit 1; fi; [ -z "$(git status --porcelain)" ] && git fetch -q origin poc/platform-poc-001 && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/poc/platform-poc-001)" ] && echo "PASS: GATE 2B reviews pushed commit $(git rev-parse HEAD)" || { echo "STOP: reviewed state is not a clean pushed commit" >&2; exit 1; }'
+
   - id: gate-2b
     type: gate
     message: >-
@@ -126,10 +176,11 @@ steps:
     show_file: specs/001-foundation-health/reviews/ANALYZE.md
     options: [approve, reject]
     on_reject: skip
+    verdict_input: gate_2b_verdict
 
   - id: gate-2b-record
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2B "HUMAN GATE 2B tasks and analyze review" "{{ steps.gate-2b.output.choice }}" "{{ context.run_id }}"'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2B "HUMAN GATE 2B tasks and analyze review" "{{ steps.gate-2b.output.choice }}" "{{ context.run_id }}" gate_2b_verdict "{{ inputs.gate_2b_verdict }}"'
 
   - id: gate-2b-enforce
     type: shell
@@ -214,6 +265,10 @@ steps:
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record Codex convergence (run {{ context.run_id }})"'
 
+  - id: converge-review-ready
+    type: shell
+    run: 'if [ -n "{{ inputs.converge_verdict }}" ]; then echo "STOP: converge_verdict was set before convergence gate was reached" >&2; exit 1; fi; [ -z "$(git status --porcelain)" ] && git fetch -q origin poc/platform-poc-001 && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/poc/platform-poc-001)" ] && echo "PASS: convergence gate reviews pushed commit $(git rev-parse HEAD)" || { echo "STOP: reviewed state is not a clean pushed commit" >&2; exit 1; }'
+
   - id: converge-review
     type: gate
     message: >-
@@ -224,10 +279,11 @@ steps:
     show_file: specs/001-foundation-health/reviews/CONVERGE.md
     options: [accept, repair, abort]
     on_reject: skip
+    verdict_input: converge_verdict
 
   - id: converge-review-record
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_CONVERGE "Convergence review gate" "{{ steps.converge-review.output.choice }}" "{{ context.run_id }}"'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_CONVERGE "Convergence review gate" "{{ steps.converge-review.output.choice }}" "{{ context.run_id }}" converge_verdict "{{ inputs.converge_verdict }}"'
 
   - id: converge-review-enforce
     type: shell
@@ -368,6 +424,10 @@ steps:
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record Grok read-only critique (run {{ context.run_id }})" specs/001-foundation-health/reviews/GROK_CRITIC.md'
 
   # ── Final human promotion gate (no merge here; auto-merge forbidden) ──
+  - id: final-gate-ready
+    type: shell
+    run: 'if [ -n "{{ inputs.final_verdict }}" ]; then echo "STOP: final_verdict was set before FINAL GATE was reached" >&2; exit 1; fi; [ -z "$(git status --porcelain)" ] && git fetch -q origin poc/platform-poc-001 && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/poc/platform-poc-001)" ] && echo "PASS: FINAL GATE reviews pushed commit $(git rev-parse HEAD)" || { echo "STOP: reviewed state is not a clean pushed commit" >&2; exit 1; }'
+
   - id: final-gate
     type: gate
     message: >-
@@ -378,10 +438,11 @@ steps:
       Every choice is recorded in Git first.
     options: [approve, request-changes, abort]
     on_reject: skip
+    verdict_input: final_verdict
 
   - id: final-gate-record
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_FINAL "FINAL HUMAN GATE" "{{ steps.final-gate.output.choice }}" "{{ context.run_id }}"'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_FINAL "FINAL HUMAN GATE" "{{ steps.final-gate.output.choice }}" "{{ context.run_id }}" final_verdict "{{ inputs.final_verdict }}"'
 
   - id: final-gate-enforce
     type: shell
