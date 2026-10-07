@@ -24,8 +24,9 @@ import {
 
 // Focused, deterministic checks of the Iteration B probe through its code-level client injection
 // interface (T011) and self-tests of the shared HTTP assertions (T006) use no Docker, PostgreSQL,
-// HTTP server or network. The last suite (T008/T009 subset) runs the real 10 healthy -> 10
-// database-loss -> 10 recovery lifecycle against the production image and PostgreSQL 17.
+// HTTP server or network. The real-container suites run the 10 healthy -> 10 database-loss -> 10
+// recovery lifecycle against the production image and PostgreSQL 17 (T008/T009 subset), and 5
+// repeated requests against a silent PostgreSQL listener with socket-cleanup checks (T007/T010 subset).
 
 const VALID_ENV = Object.freeze({
   POSTGRES_HOST: "db.internal",
@@ -618,8 +619,11 @@ const COMPOSE_DOWN_TIMEOUT_MS = 180_000;
 const READINESS_LIMIT_MS = 120_000;
 const READINESS_POLL_MS = 500;
 
-/** Unique project name and fresh credentials; the values are never printed. */
-function createFixture() {
+/**
+ * Unique project name and fresh credentials; the values are never printed. `profileArgs` select
+ * the Compose profile(s) of a fault scenario for every compose command of that project.
+ */
+function createFixture(prefix = "toolhunter-d2b", profileArgs = []) {
   const suffix = randomBytes(6).toString("hex");
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -631,11 +635,14 @@ function createFixture() {
   env.POSTGRES_DB = `poc_${randomBytes(6).toString("hex")}`;
   env.POSTGRES_USER = `u_${randomBytes(6).toString("hex")}`;
   env.POSTGRES_PASSWORD = randomBytes(24).toString("base64url");
-  return { project: `toolhunter-d2b-${suffix}`, env };
+  return { project: `${prefix}-${suffix}`, env, profileArgs };
 }
 
-/** Runs `docker <args>`; a failure carries only `label` and the exit status, never output. */
-function docker(fixture, args, label, timeoutMs) {
+/**
+ * Runs `docker <args>`; a failure carries only `label` and the exit status, never output.
+ * Resolves with stdout (plus stderr when `withStderr`) for in-memory inspection only.
+ */
+function docker(fixture, args, label, timeoutMs, { withStderr = false } = {}) {
   return new Promise((resolve, reject) => {
     execFile(
       "docker",
@@ -648,9 +655,9 @@ function docker(fixture, args, label, timeoutMs) {
         maxBuffer: 64 * 1024 * 1024,
         windowsHide: true,
       },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         if (!error) {
-          resolve(String(stdout).trim());
+          resolve(withStderr ? `${stdout}\n${stderr}`.trim() : String(stdout).trim());
           return;
         }
         let reason;
@@ -670,7 +677,14 @@ function docker(fixture, args, label, timeoutMs) {
 }
 
 function compose(fixture, args, label, timeoutMs = COMPOSE_STEP_TIMEOUT_MS) {
-  const projectArgs = ["compose", "-p", fixture.project, "-f", TEST_COMPOSE_FILE];
+  const projectArgs = [
+    "compose",
+    "-p",
+    fixture.project,
+    "-f",
+    TEST_COMPOSE_FILE,
+    ...fixture.profileArgs,
+  ];
   return docker(fixture, [...projectArgs, ...args], label, timeoutMs);
 }
 
@@ -699,13 +713,17 @@ async function containerState(fixture, id, label) {
   return { running: state?.Running === true, startedAt: String(state?.StartedAt ?? "") };
 }
 
-async function appHttpBaseUrl(fixture) {
-  const published = await compose(fixture, ["port", "app", "3000"], "discover app HTTP port");
+async function loopbackUrl(fixture, service, port, what) {
+  const published = await compose(fixture, ["port", service, String(port)], `discover ${what} port`);
   const match = /^127\.0\.0\.1:(\d{1,5})$/.exec(published);
   if (match === null) {
-    assert.fail("app HTTP port is not published on 127.0.0.1 with a single dynamic port");
+    assert.fail(`${what} port is not published on 127.0.0.1 with a single dynamic port`);
   }
   return `http://127.0.0.1:${match[1]}`;
+}
+
+function appHttpBaseUrl(fixture, service = "app") {
+  return loopbackUrl(fixture, service, 3000, "app HTTP");
 }
 
 /** One real GET; the body is read inside the measured interval. */
@@ -770,8 +788,8 @@ async function withContext(where, run) {
   }
 }
 
-async function assertSameRunningApp(fixture, identity, when) {
-  const id = await containerId(fixture, "app");
+async function assertSameRunningApp(fixture, identity, when, service = "app") {
+  const id = await containerId(fixture, service);
   assert.equal(id, identity.id, `${when}: app container was replaced`);
   const state = await containerState(fixture, id, "inspect app container");
   assert.equal(state.running, true, `${when}: app container is not running`);
@@ -858,6 +876,255 @@ describe("real database loss and recovery (production image + PostgreSQL 17)", (
 
       // Always runs, on success and on every failure path: removes only this run's containers,
       // network, volume and locally built image.
+      if (owned) {
+        try {
+          await compose(
+            fixture,
+            ["down", "-v", "--remove-orphans", "--rmi", "local", "--timeout", "5"],
+            "owned fixture cleanup",
+            COMPOSE_DOWN_TIMEOUT_MS,
+          );
+        } catch (cleanupError) {
+          if (primaryError === undefined) {
+            primaryError = cleanupError;
+          } else {
+            t.diagnostic("owned fixture cleanup also failed");
+          }
+        }
+      }
+      if (primaryError !== undefined) {
+        throw primaryError;
+      }
+    },
+  );
+});
+
+// --- Silent PostgreSQL dependency / socket cleanup (T007 + silent-listener part of T010) --------
+//
+// A separate owned project with profile `silent-listener`: the production app image (`app-stalled`)
+// with POSTGRES_HOST/PORT pointed at tests/fixtures/stalled-postgres.mjs, which accepts TCP
+// connections but never sends a byte. The fixture's test-only control endpoint reports only its own
+// ACTIVE accepted sockets. Same ownership, failure, cleanup and output rules as the suite above.
+
+const SILENT_PROFILE_ARGS = Object.freeze(["--profile", "silent-listener"]);
+const SILENT_REQUESTS = 5;
+/** Measured from the completed HTTP response; never extends the 5,000 ms HTTP deadline. */
+const CLEANUP_GRACE_MS = 1_000;
+const CLEANUP_POLL_MS = 25;
+const IN_FLIGHT_POLL_MS = 100;
+const CONTROL_TIMEOUT_MS = 1_000;
+/** Crash evidence in the app's own output (Node/Next.js wording); logs are matched, never printed. */
+const CRASH_LOG_PATTERN = /unhandled\s*rejection|uncaught\s*exception/i;
+
+/** Reads the fixture's ACTIVE accepted-socket count; failures carry only fixed messages. */
+async function readActiveSockets(controlUrl) {
+  let status;
+  let text;
+  try {
+    const response = await fetch(`${controlUrl}/active`, {
+      signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
+    });
+    status = response.status;
+    text = await response.text();
+  } catch {
+    assert.fail("fixture control endpoint unreachable or timed out");
+  }
+  if (status !== 200) {
+    assert.fail(`fixture control endpoint returned HTTP ${status}`);
+  }
+  const body = parseJson(text, "fixture control endpoint");
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    Array.isArray(body) ||
+    Object.keys(body).length !== 1 ||
+    !Number.isSafeInteger(body.active) ||
+    body.active < 0
+  ) {
+    assert.fail("fixture control endpoint: unexpected response shape");
+  }
+  return body.active;
+}
+
+/**
+ * One timed health request while the fixture count is sampled in parallel, so each request proves
+ * the app really connected to the silent listener. `sampling` never rejects; it resolves with
+ * `{ peak }` or `{ error }` once the request has finished. `responseEndedAt` marks the completed
+ * response (status, headers and body) and starts the cleanup grace.
+ */
+async function timedRequestWhileSampling(baseUrl, controlUrl) {
+  let inFlight = true;
+  const sampling = (async () => {
+    let peak = 0;
+    while (inFlight) {
+      peak = Math.max(peak, await readActiveSockets(controlUrl));
+      if (inFlight) {
+        await delay(IN_FLIGHT_POLL_MS);
+      }
+    }
+    return peak;
+  })().then(
+    (peak) => ({ peak }),
+    (error) => ({ error }),
+  );
+
+  let measured;
+  try {
+    measured = await timedHealthRequest(baseUrl);
+  } finally {
+    inFlight = false;
+  }
+  return { ...measured, responseEndedAt: performance.now(), sampling };
+}
+
+/**
+ * Polls until the fixture's active count equals `baseline`, at most CLEANUP_GRACE_MS after the
+ * response; resolves with the observed cleanup time.
+ */
+async function waitForSocketBaseline(controlUrl, baseline, responseEndedAt) {
+  for (;;) {
+    const active = await readActiveSockets(controlUrl);
+    const sinceResponseMs = performance.now() - responseEndedAt;
+    if (active === baseline && sinceResponseMs <= CLEANUP_GRACE_MS) {
+      return sinceResponseMs;
+    }
+    if (sinceResponseMs >= CLEANUP_GRACE_MS) {
+      assert.fail(
+        `fixture active sockets did not return to the pre-request baseline within ${CLEANUP_GRACE_MS} ms after the response (active ${active}, baseline ${baseline})`,
+      );
+    }
+    await delay(CLEANUP_POLL_MS);
+  }
+}
+
+async function assertNoCrashEvidence(fixture, id) {
+  const logs = await docker(fixture, ["logs", id], "read app container logs", COMPOSE_STEP_TIMEOUT_MS, {
+    withStderr: true,
+  });
+  assert.ok(
+    !CRASH_LOG_PATTERN.test(logs),
+    "app container output reports an unhandled rejection or uncaught exception",
+  );
+}
+
+describe("silent PostgreSQL dependency (production image + stalled listener)", () => {
+  test(
+    "5 sequential requests -> exact 503 <=5000 ms, owned sockets back to baseline <=1000 ms, same app process",
+    { timeout: LIFECYCLE_TIMEOUT_MS },
+    async (t) => {
+      const fixture = createFixture("toolhunter-d2c1", SILENT_PROFILE_ARGS);
+      let owned = false;
+      let primaryError;
+
+      try {
+        // Missing Docker or Compose is a hard failure, never a skip.
+        await docker(
+          fixture,
+          ["compose", "version"],
+          "Docker/Compose availability check (required; this test never skips)",
+          COMPOSE_CHECK_TIMEOUT_MS,
+        );
+
+        owned = true;
+        await compose(
+          fixture,
+          [
+            "up",
+            "-d",
+            "--build",
+            "--wait",
+            "--wait-timeout",
+            String(COMPOSE_WAIT_TIMEOUT_S),
+            "stalled-postgres",
+            "app-stalled",
+          ],
+          "bounded silent-listener fixture startup",
+          COMPOSE_UP_TIMEOUT_MS,
+        );
+
+        const listenerId = await containerId(fixture, "stalled-postgres");
+        const listenerPorts = parseJson(
+          await docker(
+            fixture,
+            ["inspect", "--format", "{{json .HostConfig.PortBindings}}", listenerId],
+            "inspect silent listener port bindings",
+            COMPOSE_STEP_TIMEOUT_MS,
+          ),
+          "inspect silent listener port bindings",
+        );
+        assert.deepEqual(
+          Object.keys(listenerPorts ?? {}),
+          ["8080/tcp"],
+          "silent listener must publish only its control port",
+        );
+        for (const binding of listenerPorts["8080/tcp"] ?? []) {
+          assert.equal(binding?.HostIp, "127.0.0.1", "silent listener control port must be loopback only");
+        }
+
+        const controlUrl = await loopbackUrl(fixture, "stalled-postgres", 8080, "silent listener control");
+        const baseUrl = await appHttpBaseUrl(fixture, "app-stalled");
+
+        // App identity is captured before any fault request.
+        const appId = await containerId(fixture, "app-stalled");
+        const appState = await containerState(fixture, appId, "inspect app container");
+        assert.equal(appState.running, true, "app container is not running after startup");
+        assert.ok(appState.startedAt.length > 0, "app container StartedAt is missing");
+        const identity = { id: appId, startedAt: appState.startedAt };
+
+        const originalBaseline = await withContext("silent-listener original baseline", () =>
+          readActiveSockets(controlUrl),
+        );
+
+        let maxElapsedMs = 0;
+        let maxCleanupMs = 0;
+        for (let index = 0; index < SILENT_REQUESTS; index += 1) {
+          await withContext(`silent-listener request ${index}`, async () => {
+            const baseline = await readActiveSockets(controlUrl);
+            const { response, elapsedMs, responseEndedAt, sampling } =
+              await timedRequestWhileSampling(baseUrl, controlUrl);
+            // Exact HTTP 503 degraded/ok/unavailable + no-store, <=5000 ms monotonic.
+            await assertUnavailableResponse(response, { elapsedMs });
+            const cleanupMs = await waitForSocketBaseline(controlUrl, baseline, responseEndedAt);
+
+            const sampled = await sampling;
+            if (sampled.error !== undefined) {
+              throw sampled.error;
+            }
+            assert.ok(
+              sampled.peak > baseline,
+              "app did not open a connection to the silent listener during the request",
+            );
+
+            maxElapsedMs = Math.max(maxElapsedMs, elapsedMs);
+            maxCleanupMs = Math.max(maxCleanupMs, cleanupMs);
+            t.diagnostic(
+              `silent-listener request ${index}: exact HTTP 503 in ${Math.round(elapsedMs)} ms; ` +
+                `active sockets ${baseline} -> peak ${sampled.peak} -> ${baseline} ` +
+                `within ${Math.round(cleanupMs)} ms after the response`,
+            );
+          });
+        }
+
+        const finalActive = await withContext("silent-listener final count", () =>
+          readActiveSockets(controlUrl),
+        );
+        assert.equal(
+          finalActive,
+          originalBaseline,
+          "fixture active sockets after all requests differ from the original baseline",
+        );
+        await assertSameRunningApp(fixture, identity, "after silent-listener requests", "app-stalled");
+        await assertNoCrashEvidence(fixture, appId);
+        t.diagnostic(
+          `silent-listener: ${SILENT_REQUESTS}/${SILENT_REQUESTS} exact HTTP 503 (max ${Math.round(maxElapsedMs)} ms), ` +
+            `socket cleanup max ${Math.round(maxCleanupMs)} ms, active ${finalActive} = baseline ${originalBaseline}`,
+        );
+      } catch (error) {
+        primaryError = error;
+      }
+
+      // Always runs, on success and on every failure path: removes only this run's containers,
+      // network and locally built image (the profile is selected so its services are included).
       if (owned) {
         try {
           await compose(

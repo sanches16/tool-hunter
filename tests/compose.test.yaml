@@ -1,4 +1,5 @@
-# Isolated test fixture (T008 subset, Iteration D2B): production-mode `app` + PostgreSQL 17 `db`.
+# Isolated test fixture (T008 subset, Iteration D2B): production-mode `app` + PostgreSQL 17 `db`;
+# plus the profile-gated silent-listener scenario (Iteration D2C1, see the section below).
 # Standalone from the developer `compose.yaml`. Used only by tests/integration/health.test.mjs, which
 # runs it under a unique `-p` project name per run, generates ephemeral DB/user/password values and
 # passes them only through the child-process environment, then removes the project with
@@ -52,6 +53,65 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+      start_period: 5s
+
+  # --- Silent-dependency fault scenario (T007/T010 subset, Iteration D2C1) ------------------------
+  # Profile-gated: never started by the default (D2B) selection. The silent-listener suite starts
+  # only `stalled-postgres` + `app-stalled` with `--profile silent-listener` in its own project.
+
+  stalled-postgres:
+    profiles: [silent-listener]
+    # Same pinned Node 24 base image as the production Dockerfile; runs only the mounted fixture.
+    image: node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+    user: node
+    command: ["node", "/fixture/stalled-postgres.mjs"]
+    volumes:
+      - ./fixtures/stalled-postgres.mjs:/fixture/stalled-postgres.mjs:ro
+    ports:
+      # Test-only control endpoint (GET /active), loopback only, dynamic host port. The silent
+      # PostgreSQL-like port 5432 is never published; it is reachable only on the project network.
+      - "127.0.0.1::8080"
+    restart: "no"
+    stop_grace_period: 5s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/active').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 1s
+      timeout: 5s
+      retries: 30
+      start_period: 2s
+
+  app-stalled:
+    profiles: [silent-listener]
+    # Same production Dockerfile/runtime stage as `app`; only the database destination differs.
+    build:
+      context: ..
+    environment:
+      POSTGRES_HOST: stalled-postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1::3000"
+    depends_on:
+      stalled-postgres:
+        condition: service_healthy
+        restart: false
+    restart: "no"
+    healthcheck:
+      # HTTP server liveness only (static page); independent of the database.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 5s
+      retries: 60
       start_period: 5s
 
 volumes:
