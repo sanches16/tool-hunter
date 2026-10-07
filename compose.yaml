@@ -1,0 +1,56 @@
+# Local foundation stack (T016): Next.js `app` + PostgreSQL 17 `db`.
+# DB/user/password come from the environment (normally the ignored local `.env`). Missing or empty
+# values stop Compose with an error naming only the variable, never a value.
+
+services:
+  app:
+    build:
+      context: .
+    environment:
+      # Fixed in-network destination: Compose service `db`, port 5432.
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+    ports:
+      # Loopback only.
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        # Gates initial startup only; DB stop/start never restarts or recreates the app.
+        condition: service_healthy
+        restart: false
+    restart: "no"
+    healthcheck:
+      # Liveness of the HTTP server only (static page); deliberately independent of the database.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  db:
+    image: postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+    # No host port: the database is reachable only on the Compose network.
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    restart: "no"
+    healthcheck:
+      # TCP check on 127.0.0.1 so the init-time socket-only server is not reported ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  db-data:
