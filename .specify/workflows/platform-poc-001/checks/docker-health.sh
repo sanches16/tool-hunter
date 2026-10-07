@@ -1,46 +1,119 @@
 #!/usr/bin/env bash
-# Docker Compose health, DB-loss and recovery verification (AC-02..AC-04).
+# Docker Compose lifecycle verification of the production stack (contract
+# "Compose interface"): startup → 200 → DB stop → 503 ≤5 s → DB start → 200 with
+# the same app container/process → app stop → no response → cleanup.
+# Uses an ephemeral env file with a generated password (never printed), a unique
+# Compose project and removes only that project's containers, network, volume
+# and locally built image. Never reads the developer .env.
+# Usage: docker-health.sh [label]
 source "$(dirname "$0")/lib.sh"
-url="$APP_URL/api/health"
-out=".agent-out/health.json"
+label="${1:-initial}"
+evidence="$EVIDENCE_DIR/docker-health.json"
+url="http://127.0.0.1:3000/api/health"
+mkdir -p "$EVIDENCE_DIR"
 
-# One health request; prints "<http_code> <seconds>" and stores the body.
-probe() { curl -sS -m 6 -o "$out" -w '%{http_code} %{time_total}' "$url" || echo "000 6"; }
+tmp="$(mktemp -d)"
+chmod 700 "$tmp"
+project="toolhunter-verify-$(date +%s)-$$"
+body="$tmp/body.json"; headers="$tmp/headers.txt"
+password="$(openssl rand -hex 24)"
+umask 077
+cat > "$tmp/verify.env" <<EOF
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
+POSTGRES_DB=foundation
+POSTGRES_USER=foundation
+POSTGRES_PASSWORD=$password
+EOF
+unset password
+# --env-file replaces the project .env for interpolation; exported values make
+# the same settings visible to Compose regardless of how compose.yaml reads them.
+set -a; . "$tmp/verify.env"; set +a
+dc() { docker compose -p "$project" --env-file "$tmp/verify.env" "$@"; }
 
-expect() {  # expect <http_code> <status> <database> <label>
-  local code secs
-  read -r code secs < <(probe)
-  awk -v s="$secs" 'BEGIN { exit !(s <= 5.0) }' || fail "$4: response took ${secs}s (> 5s bound)"
-  [ "$code" = "$1" ] || { cat "$out" 2>/dev/null; fail "$4: HTTP $code, expected $1"; }
-  [ "$(jq -r .status "$out")" = "$2" ] || { cat "$out"; fail "$4: status != $2"; }
-  [ "$(jq -r .database "$out")" = "$3" ] || { cat "$out"; fail "$4: database != $3"; }
-  pass "$4: HTTP $code status=$2 database=$3 in ${secs}s"
+cleanup() {
+  dc down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+records="[]"
+tree="$(worktree_tree)"   # docker-health must not change files; checked at the end
+write_evidence() {
+  jq -n --arg label "$label" --arg tree "$tree" --arg project "$project" \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson checks "$records" '{
+      stage: "docker-health", label: $label, recorded_at: $at, worktree_tree: $tree,
+      compose_project: $project, checks: $checks }' > "$evidence"
+}
+record() {  # record <criterion> <PASS|FAIL> <detail>
+  records="$(jq --arg c "$1" --arg r "$2" --arg d "$3" '. + [{criterion: $c, result: $r, detail: $d}]' <<<"$records")"
+  write_evidence
+  [ "$2" = "PASS" ] && pass "$1: $3" || fail "$1: $3"
 }
 
-wait_for() {  # wait_for <http_code> <label>
-  for _ in $(seq 1 60); do
-    [ "$(probe | cut -d' ' -f1)" = "$1" ] && return 0
-    sleep 2
+# One request: sets code, ms and leaves body/headers in $tmp.
+probe() {
+  local start end
+  : > "$body"; : > "$headers"
+  start="$(now_ms)"
+  code="$(curl -sS -m 6 -D "$headers" -o "$body" -w '%{http_code}' "$url" 2>/dev/null || true)"
+  end="$(now_ms)"
+  ms=$((end - start))
+  [ -n "$code" ] || code="000"
+}
+
+expect_health() {  # expect_health <criterion> <code> <status> <application> <database>
+  probe
+  local keys nostore
+  keys="$(jq -c 'keys' "$body" 2>/dev/null || echo invalid)"
+  nostore="$(grep -iE '^cache-control:.*no-store' "$headers" >/dev/null && echo yes || echo no)"
+  if [ "$code" = "$2" ] && [ "$ms" -le 5000 ] && [ "$keys" = '["application","database","status"]' ] \
+     && [ "$(jq -r .status "$body")" = "$3" ] && [ "$(jq -r .application "$body")" = "$4" ] \
+     && [ "$(jq -r .database "$body")" = "$5" ] && [ "$nostore" = yes ]; then
+    record "$1" PASS "HTTP $code {status:$3,application:$4,database:$5} no-store in ${ms} ms"
+  else
+    record "$1" FAIL "HTTP $code keys=$keys no-store=$nostore in ${ms} ms (expected $2 $3/$4/$5 ≤5000 ms)"
+  fi
+}
+
+wait_for_code() {  # wait_for_code <code> <seconds>
+  local deadline=$(( $(date +%s) + $2 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    probe; [ "$code" = "$1" ] && return 0; sleep 1
   done
-  fail "$2: endpoint never returned HTTP $1"
+  return 1
 }
 
-trap 'docker compose down >/dev/null 2>&1 || true' EXIT
-[ -f .env ] || cp .env.example .env
-docker compose up -d --build
-db="$(db_service)"
+app_state() { docker inspect -f '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}' "$(dc ps -q app)"; }
 
-wait_for 200 "startup"
-expect 200 ok ok "healthy"
+dc up -d --build --wait --wait-timeout 120 >/dev/null 2>&1 \
+  && record "compose-startup" PASS "docker compose up -d --build --wait (project $project)" \
+  || record "compose-startup" FAIL "docker compose up --wait failed"
 
-app_id_before="$(docker compose ps -q | sort | tr '\n' ' ')"
-docker compose stop "$db"
-sleep 2
-expect 503 degraded unavailable "database stopped"
+wait_for_code 200 60 || true
+expect_health "healthy-200" 200 ok ok ok
+before="$(app_state)"
 
-docker compose start "$db"
-wait_for 200 "recovery"
-expect 200 ok ok "recovered without app restart"
-app_id_after="$(docker compose ps -q | sort | tr '\n' ' ')"
-[ "$app_id_before" = "$app_id_after" ] || fail "containers were recreated during recovery"
-pass "DOCKER HEALTH: healthy, DB-loss 503, recovery"
+dc stop db >/dev/null 2>&1
+expect_health "db-stopped-503" 503 degraded ok unavailable
+
+dc start db >/dev/null 2>&1
+wait_for_code 200 90 || true
+expect_health "db-restarted-200" 200 ok ok ok
+after="$(app_state)"
+[ "$before" = "$after" ] \
+  && record "same-app-process" PASS "app container id, StartedAt and RestartCount unchanged" \
+  || record "same-app-process" FAIL "app container or process changed during DB stop/start"
+
+dc stop app >/dev/null 2>&1
+probe
+[ "$code" = "000" ] \
+  && record "app-stopped-no-response" PASS "no HTTP response after app stop" \
+  || record "app-stopped-no-response" FAIL "HTTP $code after app stop"
+
+dc down --volumes --remove-orphans --rmi local >/dev/null 2>&1
+[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$project")" ] \
+  && record "cleanup" PASS "project containers, network, volume and local image removed" \
+  || record "cleanup" FAIL "project resources remain"
+[ "$(worktree_tree)" = "$tree" ] || fail "working tree changed during Docker verification"
+pass "DOCKER LIFECYCLE (evidence: $evidence)"

@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "platform-poc-001"
   name: "PLATFORM-POC-001 remainder (after HUMAN GATE #1)"
-  version: "1.2.3"
+  version: "1.2.4"
   author: "sanches16"
   description: >-
     Plan → tasks → analyze → implement → deterministic verification → CI →
@@ -44,6 +44,70 @@ inputs:
     default: ""
     enum: ["", "approve", "request-changes", "abort"]
     prompt: "FINAL HUMAN GATE verdict, set only from the owner's explicit decision"
+  metrics_submitted:
+    type: string
+    default: ""
+    enum: ["", "submitted"]
+    prompt: "Set to submitted (on resume) together with the owner's FR-013 values"
+  metric_manual_copy_paste:
+    type: string
+    default: ""
+    prompt: "FR-013 count (manual_copy_paste), owner-supplied non-negative integer"
+  metric_context_reexplained:
+    type: string
+    default: ""
+    prompt: "FR-013 count (context_reexplained), owner-supplied non-negative integer"
+  metric_converge_gaps:
+    type: string
+    default: ""
+    prompt: "FR-013 count (converge_gaps), owner-supplied non-negative integer"
+  metric_grok_unique_findings:
+    type: string
+    default: ""
+    prompt: "FR-013 count (grok_unique_findings), owner-supplied non-negative integer"
+  metric_claude_scope_deviations:
+    type: string
+    default: ""
+    prompt: "FR-013 count (claude_scope_deviations), owner-supplied non-negative integer"
+  metric_broken_sdd_artifacts:
+    type: string
+    default: ""
+    prompt: "FR-013 count (broken_sdd_artifacts), owner-supplied non-negative integer"
+  rating_installation_difficulty:
+    type: string
+    default: ""
+    enum: ["", "1", "2", "3", "4", "5"]
+    prompt: "FR-013 rating 1-5 (installation_difficulty), owner-supplied"
+  rating_agent_switching_friction:
+    type: string
+    default: ""
+    enum: ["", "1", "2", "3", "4", "5"]
+    prompt: "FR-013 rating 1-5 (agent_switching_friction), owner-supplied"
+  rating_artifact_clarity:
+    type: string
+    default: ""
+    enum: ["", "1", "2", "3", "4", "5"]
+    prompt: "FR-013 rating 1-5 (artifact_clarity), owner-supplied"
+  rating_review_confidence:
+    type: string
+    default: ""
+    enum: ["", "1", "2", "3", "4", "5"]
+    prompt: "FR-013 rating 1-5 (review_confidence), owner-supplied"
+  rating_resume_recovery:
+    type: string
+    default: ""
+    enum: ["", "1", "2", "3", "4", "5"]
+    prompt: "FR-013 rating 1-5 (resume_recovery), owner-supplied"
+  rating_reuse_next_project:
+    type: string
+    default: ""
+    enum: ["", "1", "2", "3", "4", "5"]
+    prompt: "FR-013 rating 1-5 (reuse_next_project), owner-supplied"
+  poc_decision:
+    type: string
+    default: ""
+    enum: ["", "ACCEPT_NATIVE_STACK", "TEST_CLINE", "INVESTIGATE_RUFLO"]
+    prompt: "Owner's platform decision for PLATFORM-POC-001-RESULT.md"
 
 # Conventions
 # - Before every gate the reviewed state is a clean commit already pushed to
@@ -67,7 +131,7 @@ steps:
 
   - id: verdicts-empty-at-start
     type: shell
-    run: 'v="{{ inputs.gate_2a_verdict }}{{ inputs.gate_2b_verdict }}{{ inputs.converge_verdict }}{{ inputs.final_verdict }}"; if [ -z "$v" ]; then echo "PASS: no gate verdict pre-supplied"; else echo "STOP: gate verdicts may only be passed on resume at the paused gate" >&2; exit 1; fi'
+    run: 'v="{{ inputs.gate_2a_verdict }}{{ inputs.gate_2b_verdict }}{{ inputs.converge_verdict }}{{ inputs.final_verdict }}{{ inputs.metrics_submitted }}{{ inputs.metric_manual_copy_paste }}{{ inputs.metric_context_reexplained }}{{ inputs.metric_converge_gaps }}{{ inputs.metric_grok_unique_findings }}{{ inputs.metric_claude_scope_deviations }}{{ inputs.metric_broken_sdd_artifacts }}{{ inputs.rating_installation_difficulty }}{{ inputs.rating_agent_switching_friction }}{{ inputs.rating_artifact_clarity }}{{ inputs.rating_review_confidence }}{{ inputs.rating_resume_recovery }}{{ inputs.rating_reuse_next_project }}{{ inputs.poc_decision }}"; if [ -z "$v" ]; then echo "PASS: no gate verdict pre-supplied"; else echo "STOP: gate verdicts and owner metrics may only be passed on resume at the paused stage" >&2; exit 1; fi'
 
   - id: workflow-baseline
     type: shell
@@ -254,6 +318,11 @@ steps:
     type: shell
     run: '.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks'
 
+  - id: implementation-inputs
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/resolve-implementation-inputs.sh"'
+    timeout: 900
+
   - id: implement
     command: speckit.implement
     integration: claude
@@ -262,6 +331,11 @@ steps:
         Feature directory: specs/001-foundation-health. The trusted workflow already ran
         the prerequisite script; use this output instead of running it:
         {{ steps.implement-context.output.stdout }}
+        Implementation inputs resolved read-only by the trusted workflow (also in
+        .agent-out/implementation-inputs.json); write exactly these npm versions (T001)
+        and image references with digests (T015 Node 24, T016 PostgreSQL 17) and never
+        look up versions or digests yourself:
+        {{ steps.implementation-inputs.output.stdout }}
         Implement only the tasks in tasks.md approved at HUMAN GATE #2B, using repository
         artifacts as the only context. You can read and edit files only: do not run npm,
         npx, node, docker or any other command; the workflow runs install, lint,
@@ -281,7 +355,7 @@ steps:
   # ── Deterministic verification (trusted shell) ────────────────────────
   - id: local-checks
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh"'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh" initial'
     timeout: 1800
 
   - id: guard-local-checks
@@ -290,7 +364,7 @@ steps:
 
   - id: docker-health
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh"'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh" initial'
     timeout: 1200
 
   - id: guard-docker-health
@@ -303,8 +377,21 @@ steps:
 
   - id: ci
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/ci.sh"'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/ci.sh" initial'
     timeout: 2400
+    continue_on_error: true
+
+  - id: record-results
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" results initial'
+
+  - id: results-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record verification evidence (records-only, run {{ context.run_id }})" docs/poc/PLATFORM-POC-001-RESULT.md'
+
+  - id: ci-enforce
+    type: shell
+    run: 'c="$(jq -r .conclusion .agent-out/evidence/ci.json)"; if [ "$c" = "success" ]; then echo "PASS: CI success"; else echo "STOP: CI concluded $c; evidence recorded in RESULT" >&2; exit 1; fi'
 
   # ── Reviewer: converge ────────────────────────────────────────────────
   - id: converge
@@ -325,6 +412,10 @@ steps:
   - id: converge-save-report
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" CONVERGE "{{ context.run_id }}"'
+
+  - id: converge-record-link
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report CONVERGE specs/001-foundation-health/reviews/CONVERGE.md'
 
   - id: converge-commit
     type: shell
@@ -395,7 +486,7 @@ steps:
     then:
       - id: repair-local-checks-run
         type: shell
-        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh"'
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh" repair-1'
         timeout: 1800
 
   - id: guard-repair-local-checks
@@ -412,7 +503,7 @@ steps:
     then:
       - id: repair-docker-health-run
         type: shell
-        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh"'
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh" repair-1'
         timeout: 1200
 
   - id: guard-repair-docker-health
@@ -437,8 +528,33 @@ steps:
     then:
       - id: repair-ci-run
         type: shell
-        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/ci.sh"'
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/ci.sh" repair-1'
         timeout: 2400
+        continue_on_error: true
+
+  - id: repair-record-results
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-record-results-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" results repair-1'
+
+  - id: repair-results-commit
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-results-commit-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record verification evidence after repair (records-only, run {{ context.run_id }})" docs/poc/PLATFORM-POC-001-RESULT.md'
+
+  - id: repair-ci-enforce
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-ci-enforce-run
+        type: shell
+        run: 'c="$(jq -r .conclusion .agent-out/evidence/ci.json)"; if [ "$c" = "success" ]; then echo "PASS: CI success"; else echo "STOP: CI concluded $c; evidence recorded in RESULT" >&2; exit 1; fi'
 
   - id: repair-converge
     type: if
@@ -469,6 +585,14 @@ steps:
         type: shell
         run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" CONVERGE_AFTER_REPAIR "{{ context.run_id }}"'
 
+  - id: repair-converge-record-link
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-converge-record-link-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report CONVERGE_AFTER_REPAIR specs/001-foundation-health/reviews/CONVERGE_AFTER_REPAIR.md'
+
   - id: repair-converge-commit
     type: if
     condition: "{{ steps.converge-review.output.choice == 'repair' }}"
@@ -484,11 +608,42 @@ steps:
     timeout: 1800
     continue_on_error: true
 
+  - id: critic-record-link
+    type: shell
+    run: 'if [ -s specs/001-foundation-health/reviews/GROK_CRITIC.md ]; then bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC specs/001-foundation-health/reviews/GROK_CRITIC.md; else bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC -; fi'
+
   - id: critic-commit
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record Grok read-only critique (run {{ context.run_id }})" specs/001-foundation-health/reviews/GROK_CRITIC.md'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record Grok read-only critique (run {{ context.run_id }})" specs/001-foundation-health/reviews/GROK_CRITIC.md docs/poc/PLATFORM-POC-001-RESULT.md'
 
   # ── Final human promotion gate (no merge here; auto-merge forbidden) ──
+  - id: metrics-ready
+    type: shell
+    run: 'if [ -n "{{ inputs.metrics_submitted }}" ]; then echo "STOP: metrics_submitted was set before the metrics stage was reached" >&2; exit 1; fi; echo "PASS: metrics stage reached; RESULT has verification evidence and review links"'
+
+  - id: metrics-gate
+    type: gate
+    message: >-
+      OWNER METRICS (FR-013) for docs/poc/PLATFORM-POC-001-RESULT.md. Resume with
+      metrics_submitted=submitted plus the owner's values: metric_manual_copy_paste,
+      metric_context_reexplained, metric_converge_gaps, metric_grok_unique_findings,
+      metric_claude_scope_deviations, metric_broken_sdd_artifacts (integers),
+      rating_installation_difficulty, rating_agent_switching_friction,
+      rating_artifact_clarity, rating_review_confidence, rating_resume_recovery,
+      rating_reuse_next_project (1-5) and poc_decision. The operator passes only values
+      the owner stated explicitly.
+    options: [submitted]
+    on_reject: skip
+    verdict_input: metrics_submitted
+
+  - id: metrics-record
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" metrics "{{ context.run_id }}" manual_copy_paste="{{ inputs.metric_manual_copy_paste }}" context_reexplained="{{ inputs.metric_context_reexplained }}" converge_gaps="{{ inputs.metric_converge_gaps }}" grok_unique_findings="{{ inputs.metric_grok_unique_findings }}" claude_scope_deviations="{{ inputs.metric_claude_scope_deviations }}" broken_sdd_artifacts="{{ inputs.metric_broken_sdd_artifacts }}" installation_difficulty="{{ inputs.rating_installation_difficulty }}" agent_switching_friction="{{ inputs.rating_agent_switching_friction }}" artifact_clarity="{{ inputs.rating_artifact_clarity }}" review_confidence="{{ inputs.rating_review_confidence }}" resume_recovery="{{ inputs.rating_resume_recovery }}" reuse_next_project="{{ inputs.rating_reuse_next_project }}" decision="{{ inputs.poc_decision }}"'
+
+  - id: metrics-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record FR-013 metrics and owner ratings (records-only, run {{ context.run_id }})" docs/poc/PLATFORM-POC-001-RESULT.md'
+
   - id: final-gate-ready
     type: shell
     run: 'if [ -n "{{ inputs.final_verdict }}" ]; then echo "STOP: final_verdict was set before FINAL GATE was reached" >&2; exit 1; fi; [ -z "$(git status --porcelain)" ] && git fetch -q origin poc/platform-poc-001 && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/poc/platform-poc-001)" ] && echo "PASS: FINAL GATE reviews pushed commit $(git rev-parse HEAD)" || { echo "STOP: reviewed state is not a clean pushed commit" >&2; exit 1; }'
@@ -496,7 +651,8 @@ steps:
   - id: final-gate
     type: gate
     message: >-
-      FINAL HUMAN GATE for PLATFORM-POC-001. Review spec, plan, tasks, the diff
+      FINAL HUMAN GATE for PLATFORM-POC-001. docs/poc/PLATFORM-POC-001-RESULT.md now holds
+      verification evidence, review links and FR-013 metrics. Review it with spec, plan, tasks, the diff
       (git diff 288cdc7..HEAD), CI result, reviews/CONVERGE*.md, reviews/GROK_CRITIC.md
       (if present) and reviews/IMPLEMENTATION_REPORT.md. approve = merge allowed, done
       manually by a human via PR; request-changes = stop for a new decision; abort = stop.

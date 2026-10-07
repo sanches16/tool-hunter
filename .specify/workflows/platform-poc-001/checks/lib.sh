@@ -21,6 +21,22 @@ SECRET_RE='(^|[^A-Za-z0-9_-])(sk-[A-Za-z0-9_-]{32,}|xai-[A-Za-z0-9_-]{32,}|gh[op
 # Prints matching lines from stdin; exit 0 when a likely secret is present.
 has_secret() { grep -E "$SECRET_RE"; }
 
+EVIDENCE_DIR=".agent-out/evidence"
+RESULT_FILE="docs/poc/PLATFORM-POC-001-RESULT.md"
+
+# Milliseconds since epoch (macOS date has no %N).
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'; }
+
+# Git tree id of the current working tree (tracked + untracked, honouring
+# .gitignore) without touching the real index. Ties evidence to a commit.
+worktree_tree() {
+  local idx
+  idx="$(mktemp)"; rm -f "$idx"
+  GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1
+  GIT_INDEX_FILE="$idx" git write-tree
+  rm -f "$idx"
+}
+
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 

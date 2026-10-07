@@ -33,14 +33,48 @@ plain (non-checkbox) section exactly titled:
 containing a traceability matrix table with columns:
 requirement / SC | responsible workflow stage | owner (shell / Codex / Grok / Human) | expected evidence artifact
 
-Workflow stages available: `local-checks` (shell: npm ci, lint, typecheck,
-build, test), `docker-health` (shell: Compose start, health 200, DB stop → 503,
-recovery), `implement-commit` (shell: commit + push), `ci` (shell: observe
-GitHub Actions), `converge` (Codex), `critic` (Grok, optional, read-only),
-`final-gate` (Human decision), result ratings (Human). No checkbox in this
-section.
+Workflow stages available (step ids in
+`.specify/workflows/platform-poc-001/workflow.yml`; use these exact names):
 
-## 2. I1 — package.json ownership
+- `implementation-inputs` (shell): read-only resolution of exact npm versions
+  and Node 24 / PostgreSQL 17 image digests, handed to the implementer.
+- `local-checks` (shell): lockfile generation if missing, then exactly `npm ci`,
+  `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
+  `npm run verify:startup`; sanitized evidence.
+- `docker-health` (shell): ephemeral-config production Compose lifecycle —
+  startup, exact 200, DB stop → exact 503 ≤5 s, DB start → 200 with unchanged
+  app container/process, app stop → no response, cleanup of own resources.
+- `implement-commit` (shell): diff/secret-checked commit + push of the tested tree.
+- `ci` (shell): observe the GitHub Actions run of that commit.
+- `record-results` + `results-commit` (shell): write tested SHA, tool versions,
+  commands, results, timings and criterion mapping (local, Docker, CI) into
+  `docs/poc/PLATFORM-POC-001-RESULT.md`; separate records-only commit.
+- `converge` (Codex) and `critic` (Grok, optional, read-only): revision-linked
+  reports in `reviews/`, linked from RESULT by the workflow.
+- `metrics-gate` + `metrics-record` (Human values, shell writes): FR-013 counts,
+  six 1–5 ratings and platform decision into RESULT.
+- `final-gate` (Human decision), after RESULT is complete.
+
+No checkbox in this section.
+
+## 2. Externally resolved implementation inputs
+
+The implementer cannot look up package versions or image digests. The workflow
+step `implementation-inputs` resolves them read-only and passes them to the
+implementer. Therefore:
+
+- T001 writes the exact npm versions supplied by `implementation-inputs`.
+- T015 uses the supplied Node 24 image reference with digest.
+- T016 uses the supplied PostgreSQL 17 image reference with digest.
+
+Tasks must say "use the value supplied by the workflow's implementation inputs"
+instead of asking the implementer to choose, look up or verify these values.
+
+T021 creates the initial `docs/poc/PLATFORM-POC-001-RESULT.md` structure with
+pending placeholders and a final `## Workflow-recorded evidence` section that the
+implementer leaves empty: the workflow writes marked evidence blocks there.
+
+## 3. I1 — package.json ownership
 
 - T001 is the only task that creates or edits `package.json`, including all
   npm scripts: `dev`, `start`, `build`, `lint`, `typecheck`, `test`,
@@ -52,7 +86,7 @@ section.
   the trusted workflow shell creates it with
   `npm install --package-lock-only --ignore-scripts` and then runs `npm ci`.
 
-## 3. A1 — deterministic cleanup assertion for T010 (test-level only)
+## 4. A1 — deterministic cleanup assertion for T010 (test-level only)
 
 Do not change the external HTTP contract or the plan. T010's test parameters:
 

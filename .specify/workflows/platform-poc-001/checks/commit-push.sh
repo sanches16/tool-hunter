@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # Commits the current changes on the PoC branch and pushes them.
-# Usage: commit-push.sh "<commit message>" [only-path]
-# With only-path, any change outside that path fails the step.
+# Usage: commit-push.sh "<commit message>" [only-path...]
+# With only-paths, any change outside those paths fails the step.
 source "$(dirname "$0")/lib.sh"
-msg="${1:?usage: commit-push.sh <message> [only-path]}"
-only="${2:-}"
+msg="${1:?usage: commit-push.sh <message> [only-path...]}"
+shift
 
 [ "$(git branch --show-current)" = "$POC_BRANCH" ] || fail "not on $POC_BRANCH"
 check_protected_artifacts
 
-if [ -n "$only" ]; then
-  outside="$(git status --porcelain | awk '{print $NF}' | grep -vxF "$only" || true)"
-  [ -z "$outside" ] || { echo "$outside"; fail "changes outside $only"; }
+if [ "$#" -gt 0 ]; then
+  allowed="$(printf '%s\n' "$@")"
+  outside="$(git status --porcelain | awk '{print $NF}' | grep -vxF "$allowed" || true)"
+  [ -z "$outside" ] || { echo "$outside"; fail "changes outside: $*"; }
 fi
 # After commit + push the tree must be clean and HEAD must exist on GitHub.
 verify_pushed() {
