@@ -915,6 +915,78 @@ const IN_FLIGHT_POLL_MS = 100;
 const CONTROL_TIMEOUT_MS = 1_000;
 /** Crash evidence in the app's own output (Node/Next.js wording); logs are matched, never printed. */
 const CRASH_LOG_PATTERN = /unhandled\s*rejection|uncaught\s*exception/i;
+/** Start/wait phase only (images are built in the preceding phase): bounded --wait plus margin. */
+const SILENT_START_TIMEOUT_MS = COMPOSE_WAIT_TIMEOUT_S * 1_000 + COMPOSE_STEP_TIMEOUT_MS;
+const SILENT_SERVICES = Object.freeze(["stalled-postgres", "app-stalled"]);
+/** Per docker call of the failure-only startup diagnostics. */
+const STARTUP_DIAGNOSTIC_TIMEOUT_MS = 15_000;
+/**
+ * Strict inspect template: only these State fields are emitted, never .Config.Env, logs or the
+ * healthcheck Log/Output text.
+ */
+const SAFE_STATE_FORMAT =
+  '{"Running":{{json .State.Running}},"ExitCode":{{json .State.ExitCode}},' +
+  '"Health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},' +
+  '"StartedAt":{{json .State.StartedAt}},"FinishedAt":{{json .State.FinishedAt}}}';
+const HEALTH_STATUSES = new Set(["starting", "healthy", "unhealthy", "none"]);
+const DOCKER_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
+/** Re-validates every inspected field so only known-safe values are ever printed. */
+function formatSafeState(text) {
+  let state;
+  try {
+    state = JSON.parse(text);
+  } catch {
+    return "state unreadable";
+  }
+  const running = typeof state?.Running === "boolean" ? String(state.Running) : "?";
+  const exitCode = Number.isSafeInteger(state?.ExitCode) ? String(state.ExitCode) : "?";
+  const health =
+    state?.Health === null ? "no-healthcheck" : HEALTH_STATUSES.has(state?.Health) ? state.Health : "?";
+  const time = (value) => (typeof value === "string" && DOCKER_TIMESTAMP.test(value) ? value : "?");
+  return (
+    `Running=${running} ExitCode=${exitCode} Health=${health} ` +
+    `StartedAt=${time(state?.StartedAt)} FinishedAt=${time(state?.FinishedAt)}`
+  );
+}
+
+/**
+ * Failure-only, bounded and non-throwing: one sanitized line per silent-scenario service.
+ * Container IDs, env, compose config, logs and healthcheck output are never included.
+ */
+async function silentStartupDiagnostics(fixture) {
+  const lines = [];
+  for (const service of SILENT_SERVICES) {
+    try {
+      const output = await compose(
+        fixture,
+        ["ps", "--all", "-q", service],
+        `diagnose ${service} container`,
+        STARTUP_DIAGNOSTIC_TIMEOUT_MS,
+      );
+      const ids = output.split(/\s+/).filter((id) => id !== "");
+      if (ids.length === 0) {
+        lines.push(`${service}: container missing`);
+        continue;
+      }
+      if (ids.length !== 1 || !/^[0-9a-f]{12,64}$/.test(ids[0])) {
+        lines.push(`${service}: unexpected container listing (${ids.length} entries)`);
+        continue;
+      }
+      const state = await docker(
+        fixture,
+        ["inspect", "--format", SAFE_STATE_FORMAT, ids[0]],
+        `diagnose ${service} state`,
+        STARTUP_DIAGNOSTIC_TIMEOUT_MS,
+      );
+      lines.push(`${service}: container present ${formatSafeState(state)}`);
+    } catch (error) {
+      // docker() errors carry only a fixed label and exit status.
+      lines.push(`${service}: state unavailable (${error instanceof Error ? error.message : "unknown"})`);
+    }
+  }
+  return lines.join("; ");
+}
 
 /** Reads the fixture's ACTIVE accepted-socket count; failures carry only fixed messages. */
 async function readActiveSockets(controlUrl) {
@@ -1026,21 +1098,35 @@ describe("silent PostgreSQL dependency (production image + stalled listener)", (
         );
 
         owned = true;
+        // Phase 1: image build only, so a failure says whether build or readiness failed.
         await compose(
           fixture,
-          [
-            "up",
-            "-d",
-            "--build",
-            "--wait",
-            "--wait-timeout",
-            String(COMPOSE_WAIT_TIMEOUT_S),
-            "stalled-postgres",
-            "app-stalled",
-          ],
-          "bounded silent-listener fixture startup",
+          ["build", "app-stalled"],
+          "silent-listener startup phase 1/2 (build app-stalled image)",
           COMPOSE_UP_TIMEOUT_MS,
         );
+        // Phase 2: start and bounded wait for health. Fail-fast, no retry; on failure the error
+        // gains only the sanitized per-service state, collected before cleanup removes it.
+        try {
+          await compose(
+            fixture,
+            [
+              "up",
+              "-d",
+              "--wait",
+              "--wait-timeout",
+              String(COMPOSE_WAIT_TIMEOUT_S),
+              ...SILENT_SERVICES,
+            ],
+            "silent-listener startup phase 2/2 (start + bounded wait)",
+            SILENT_START_TIMEOUT_MS,
+          );
+        } catch (startError) {
+          const report = await silentStartupDiagnostics(fixture);
+          throw new assert.AssertionError({
+            message: `${startError instanceof Error ? startError.message : "startup failed"}; sanitized service state: ${report}`,
+          });
+        }
 
         const listenerId = await containerId(fixture, "stalled-postgres");
         const listenerPorts = parseJson(
