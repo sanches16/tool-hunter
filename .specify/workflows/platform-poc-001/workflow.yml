@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "platform-poc-001"
   name: "PLATFORM-POC-001 remainder (after HUMAN GATE #1)"
-  version: "1.2.4"
+  version: "1.2.5"
   author: "sanches16"
   description: >-
     Plan → tasks → analyze → implement → deterministic verification → CI →
@@ -316,7 +316,7 @@ steps:
   # ── Implementer (file edits only; all commands run in trusted shell steps) ──
   - id: implement-context
     type: shell
-    run: '.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks'
+    run: 'bash .specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks'
 
   - id: implementation-inputs
     type: shell
@@ -381,17 +381,54 @@ steps:
     timeout: 2400
     continue_on_error: true
 
+  - id: fresh-checkout
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/fresh-checkout.sh" initial'
+    timeout: 1500
+    continue_on_error: true
+
+  - id: guard-fresh-checkout
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
+
   - id: record-results
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" results initial'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" toolchain pending && bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" results initial'
 
   - id: results-commit
     type: shell
-    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record verification evidence (records-only, run {{ context.run_id }})" docs/poc/PLATFORM-POC-001-RESULT.md'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record verification evidence (records-only, run {{ context.run_id }})" docs/poc/PLATFORM-POC-001-RESULT.md docs/poc/evidence/'
 
-  - id: ci-enforce
+  - id: verification-enforce
     type: shell
-    run: 'c="$(jq -r .conclusion .agent-out/evidence/ci.json)"; if [ "$c" = "success" ]; then echo "PASS: CI success"; else echo "STOP: CI concluded $c; evidence recorded in RESULT" >&2; exit 1; fi'
+    run: 'c="$(jq -r .conclusion .agent-out/evidence/ci.json)"; f="$(jq -r "[.checks[].result] | all(. == \"PASS\")" .agent-out/evidence/fresh-checkout.json 2>/dev/null || echo false)"; if [ "$c" = "success" ] && [ "$f" = "true" ]; then echo "PASS: CI success on push and pull_request; fresh checkout passed"; else echo "STOP: CI=$c fresh_checkout_all_pass=$f; evidence recorded in RESULT" >&2; exit 1; fi'
+
+  # ── Repository-only resume assessments (fresh agents, read-only clones) ──
+  - id: resume-implementer
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/resume-assessment.sh" implementer "{{ context.run_id }}"'
+    timeout: 1800
+
+  - id: guard-resume-implementer
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
+
+  - id: resume-reviewer
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/resume-assessment.sh" reviewer "{{ context.run_id }}"'
+    timeout: 1800
+
+  - id: guard-resume-reviewer
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
+
+  - id: resume-record-links
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report RESUME_IMPLEMENTER specs/001-foundation-health/reviews/RESUME_IMPLEMENTER.md && bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report RESUME_REVIEWER specs/001-foundation-health/reviews/RESUME_REVIEWER.md'
+
+  - id: resume-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record repository-only resume assessments (run {{ context.run_id }})" specs/001-foundation-health/reviews/RESUME_IMPLEMENTER.md specs/001-foundation-health/reviews/RESUME_REVIEWER.md docs/poc/PLATFORM-POC-001-RESULT.md'
 
   # ── Reviewer: converge ────────────────────────────────────────────────
   - id: converge
@@ -452,7 +489,7 @@ steps:
     then:
       - id: repair-context-run
         type: shell
-        run: '.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks'
+        run: 'bash .specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks'
 
   - id: repair-implement
     type: if
@@ -532,13 +569,23 @@ steps:
         timeout: 2400
         continue_on_error: true
 
+  - id: repair-fresh-checkout
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-fresh-checkout-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/fresh-checkout.sh" repair-1'
+        timeout: 1500
+        continue_on_error: true
+
   - id: repair-record-results
     type: if
     condition: "{{ steps.converge-review.output.choice == 'repair' }}"
     then:
       - id: repair-record-results-run
         type: shell
-        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" results repair-1'
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" toolchain pending && bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" results repair-1'
 
   - id: repair-results-commit
     type: if
@@ -546,15 +593,15 @@ steps:
     then:
       - id: repair-results-commit-run
         type: shell
-        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record verification evidence after repair (records-only, run {{ context.run_id }})" docs/poc/PLATFORM-POC-001-RESULT.md'
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record verification evidence after repair (records-only, run {{ context.run_id }})" docs/poc/PLATFORM-POC-001-RESULT.md docs/poc/evidence/'
 
-  - id: repair-ci-enforce
+  - id: repair-verification-enforce
     type: if
     condition: "{{ steps.converge-review.output.choice == 'repair' }}"
     then:
-      - id: repair-ci-enforce-run
+      - id: repair-verification-enforce-run
         type: shell
-        run: 'c="$(jq -r .conclusion .agent-out/evidence/ci.json)"; if [ "$c" = "success" ]; then echo "PASS: CI success"; else echo "STOP: CI concluded $c; evidence recorded in RESULT" >&2; exit 1; fi'
+        run: 'c="$(jq -r .conclusion .agent-out/evidence/ci.json)"; f="$(jq -r "[.checks[].result] | all(. == \"PASS\")" .agent-out/evidence/fresh-checkout.json 2>/dev/null || echo false)"; if [ "$c" = "success" ] && [ "$f" = "true" ]; then echo "PASS: CI success on push and pull_request; fresh checkout passed"; else echo "STOP: CI=$c fresh_checkout_all_pass=$f; evidence recorded in RESULT" >&2; exit 1; fi'
 
   - id: repair-converge
     type: if
@@ -610,7 +657,7 @@ steps:
 
   - id: critic-record-link
     type: shell
-    run: 'if [ -s specs/001-foundation-health/reviews/GROK_CRITIC.md ]; then bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC specs/001-foundation-health/reviews/GROK_CRITIC.md; else bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC -; fi'
+    run: 'if [ -s specs/001-foundation-health/reviews/GROK_CRITIC.md ]; then bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC specs/001-foundation-health/reviews/GROK_CRITIC.md && bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" toolchain participated; else bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC - && bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" toolchain not-performed; fi'
 
   - id: critic-commit
     type: shell

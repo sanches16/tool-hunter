@@ -39,5 +39,29 @@ Report explicitly, each as PASS or FINDING with file:line evidence:
    produces.
 8. T001, T015 and T016 use values supplied by `implementation-inputs` and do
    not ask the implementer to look up versions or digests.
+9. Every workflow step that runs `.specify/scripts/bash/check-prerequisites.sh`
+   invokes it explicitly through `bash` (the file is tracked as 100644).
+10. The matrix has explicit rows for specification review (preflight /
+    HUMAN_GATE_1), plan review (plan-approved / HUMAN_GATE_2A) and
+    tasks/analyze review (gate-2b + gate-2b-record / HUMAN_GATE_2B_<run>).
+11. A tool-version producer exists: `record-evidence.sh toolchain` (steps
+    `record-results`, `critic-record-link`) records Spec Kit, Codex, Claude,
+    Grok (installed version and participated / not performed), Node, npm,
+    Docker and Compose in RESULT.
+12. The `fresh-checkout` step exists and `checks/fresh-checkout.sh` clones the
+    canonical repository at the pushed SHA, uses only documented configuration,
+    runs the Compose lifecycle, proves zero source edits and cleans up.
+13. The `resume-implementer` (Claude) and `resume-reviewer` (Codex) steps exist,
+    run read-only on fresh clones and produce RESUME_IMPLEMENTER.md /
+    RESUME_REVIEWER.md linked from RESULT.
+14. Request-level evidence has a producer (tests writing to
+    `POC_TEST_EVIDENCE_PATH`, required by tasks), a validator
+    (`local-checks.sh` schema and secret checks) and retention
+    (`record-evidence.sh results` copies it to `docs/poc/evidence/<sha>/`).
+15. CI evidence covers BOTH `push` and `pull_request` runs (`checks/ci.sh`),
+    and `verification-enforce` requires both to succeed.
+16. RESULT receives all of these evidence paths (toolchain, local, request
+    observations, Docker, fresh checkout, push CI, PR CI, converge/critic/
+    resume reports, FR-013 metrics).
 
 Read-only: do not modify any file.

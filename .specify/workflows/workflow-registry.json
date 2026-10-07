@@ -11,11 +11,11 @@
     },
     "platform-poc-001": {
       "name": "PLATFORM-POC-001 remainder (after HUMAN GATE #1)",
-      "version": "1.2.4",
+      "version": "1.2.5",
       "description": "Plan \u2192 tasks \u2192 analyze \u2192 implement \u2192 deterministic verification \u2192 CI \u2192 converge \u2192 optional critic for specs/001-foundation-health, starting from the approved HUMAN GATE #1 state. Human gates are mandatory and recorded in Git before the run continues or stops, at most one repair cycle, no merge.",
       "source": "local (project-authored, installed with specify workflow add)",
       "installed_at": "2026-10-07T07:56:14.005922+00:00",
-      "updated_at": "2026-10-07T09:37:18.406716+00:00"
+      "updated_at": "2026-10-07T10:04:17.177053+00:00"
     }
   }
 }

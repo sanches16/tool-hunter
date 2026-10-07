@@ -45,15 +45,39 @@ Workflow stages available (step ids in
   startup, exact 200, DB stop → exact 503 ≤5 s, DB start → 200 with unchanged
   app container/process, app stop → no response, cleanup of own resources.
 - `implement-commit` (shell): diff/secret-checked commit + push of the tested tree.
-- `ci` (shell): observe the GitHub Actions run of that commit.
-- `record-results` + `results-commit` (shell): write tested SHA, tool versions,
-  commands, results, timings and criterion mapping (local, Docker, CI) into
+- `ci` (shell): observe GitHub Actions for that commit on BOTH paths — the
+  `push` run and the `pull_request` run of an open (or workflow-created draft,
+  verification-only) PR from `poc/platform-poc-001` into `main`.
+- `fresh-checkout` (shell, no agent, no chat history): fresh clone of the
+  canonical repository at the pushed SHA, ignored `.env` from `.env.example`
+  with a generated password, documented Compose lifecycle (configure, start,
+  inspect, DB loss, recovery, stop), zero source edits, full cleanup.
+- `record-results` + `results-commit` (shell): toolchain versions (Spec Kit,
+  Codex, Claude, Grok incl. participation, Node, npm, Docker, Compose), tested
+  SHA, local/Docker/fresh-checkout/push-CI/PR-CI results with criterion mapping,
+  and versioned sanitized evidence files under `docs/poc/evidence/<sha>/` into
   `docs/poc/PLATFORM-POC-001-RESULT.md`; separate records-only commit.
+- `verification-enforce` (shell): requires push CI, pull_request CI and fresh
+  checkout to have passed.
+- `resume-implementer` (fresh Claude process) and `resume-reviewer` (fresh
+  Codex process): read-only, repository-only assessments of a fresh clone
+  (approved scope, status, evidence, gaps, next action) saved as
+  `reviews/RESUME_IMPLEMENTER.md` / `reviews/RESUME_REVIEWER.md` and linked
+  from RESULT (SC-006).
 - `converge` (Codex) and `critic` (Grok, optional, read-only): revision-linked
   reports in `reviews/`, linked from RESULT by the workflow.
 - `metrics-gate` + `metrics-record` (Human values, shell writes): FR-013 counts,
   six 1–5 ratings and platform decision into RESULT.
 - `final-gate` (Human decision), after RESULT is complete.
+
+The matrix MUST contain these explicit review rows (not only narrative
+prerequisites):
+
+| requirement / SC | responsible workflow stage | owner | expected evidence artifact |
+|---|---|---|---|
+| Specification review (FR-012) | `preflight` (verifies HUMAN GATE #1 approval and approved blobs) | Human + shell verification | `reviews/HUMAN_GATE_1.md` with reviewed revision and blob ids |
+| Plan review (FR-012) | `plan-approved` (HUMAN GATE #2A record check) | Human + shell verification | `reviews/HUMAN_GATE_2A.md` with reviewed plan revision |
+| Tasks/analyze review (FR-012) | `gate-2b` + `gate-2b-record` | Human | renewed `reviews/HUMAN_GATE_2B_<run>.md` (or `HUMAN_GATE_2B.md`) with reviewed candidate SHA |
 
 No checkbox in this section.
 
@@ -72,7 +96,20 @@ instead of asking the implementer to choose, look up or verify these values.
 
 T021 creates the initial `docs/poc/PLATFORM-POC-001-RESULT.md` structure with
 pending placeholders and a final `## Workflow-recorded evidence` section that the
-implementer leaves empty: the workflow writes marked evidence blocks there.
+implementer leaves empty: the workflow writes marked evidence blocks there
+(toolchain versions, verification incl. fresh checkout and push/PR CI, review
+and resume report links, FR-013 metrics). Placeholders for those items state
+that the workflow fills them.
+
+Request-level evidence (data-model): the integration tests (T009/T010) must,
+only when the environment variable `POC_TEST_EVIDENCE_PATH` is set, append one
+JSON object per timed health request to that file (JSON Lines) with exactly
+these keys: `phase` (string), `index` (integer), `http_status` (integer),
+`body` (the parsed exact three-field object, or null if none), `elapsed_ms`
+(monotonic number), optional `scenario` (string) and, for loss/recovery
+batches, `app_container_id` and `app_started_at` (strings). Values are short
+plain strings/numbers only: never connection strings, credentials, raw driver
+errors or stack traces. Without the variable, tests write nothing.
 
 ## 3. I1 — package.json ownership
 

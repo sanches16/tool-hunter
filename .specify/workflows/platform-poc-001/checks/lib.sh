@@ -23,6 +23,11 @@ has_secret() { grep -E "$SECRET_RE"; }
 
 EVIDENCE_DIR=".agent-out/evidence"
 RESULT_FILE="docs/poc/PLATFORM-POC-001-RESULT.md"
+# Versioned, sanitized evidence copied into Git by record-evidence.sh.
+EVIDENCE_REPO_DIR="docs/poc/evidence"
+# Request-level test observations: tests write JSONL here only when the
+# workflow sets POC_TEST_EVIDENCE_PATH (see tasks-rules.md).
+TEST_OBSERVATIONS=".agent-out/evidence/test-observations.jsonl"
 
 # Milliseconds since epoch (macOS date has no %N).
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'; }

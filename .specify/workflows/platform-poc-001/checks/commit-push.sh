@@ -10,8 +10,14 @@ shift
 check_protected_artifacts
 
 if [ "$#" -gt 0 ]; then
-  allowed="$(printf '%s\n' "$@")"
-  outside="$(git status --porcelain | awk '{print $NF}' | grep -vxF "$allowed" || true)"
+  # Allowed entries are exact paths, or directory prefixes ending with "/".
+  outside="$(git status --porcelain --untracked-files=all | awk '{print $NF}' | while read -r f; do
+    ok=no
+    for a in "$@"; do
+      case "$a" in */) case "$f" in "$a"*) ok=yes ;; esac ;; *) [ "$f" = "$a" ] && ok=yes ;; esac
+    done
+    [ "$ok" = yes ] || echo "$f"
+  done)"
   [ -z "$outside" ] || { echo "$outside"; fail "changes outside: $*"; }
 fi
 # After commit + push the tree must be clean and HEAD must exist on GitHub.

@@ -6,30 +6,35 @@
 # Compose project and removes only that project's containers, network, volume
 # and locally built image. Never reads the developer .env.
 # Usage: docker-health.sh [label]
+# Environment (used by fresh-checkout.sh): DH_ENV_FILE = an existing env file to
+# use instead of a generated one; DH_EVIDENCE = evidence output path;
+# DH_STAGE = stage name recorded in the evidence.
 source "$(dirname "$0")/lib.sh"
 label="${1:-initial}"
-evidence="$EVIDENCE_DIR/docker-health.json"
+evidence="${DH_EVIDENCE:-$EVIDENCE_DIR/docker-health.json}"
+stage="${DH_STAGE:-docker-health}"
 url="http://127.0.0.1:3000/api/health"
-mkdir -p "$EVIDENCE_DIR"
+mkdir -p "$(dirname "$evidence")"
 
 tmp="$(mktemp -d)"
 chmod 700 "$tmp"
 project="toolhunter-verify-$(date +%s)-$$"
 body="$tmp/body.json"; headers="$tmp/headers.txt"
-password="$(openssl rand -hex 24)"
 umask 077
-cat > "$tmp/verify.env" <<EOF
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-POSTGRES_DB=foundation
-POSTGRES_USER=foundation
-POSTGRES_PASSWORD=$password
-EOF
-unset password
+if [ -n "${DH_ENV_FILE:-}" ]; then
+  [ -f "$DH_ENV_FILE" ] || fail "DH_ENV_FILE $DH_ENV_FILE missing"
+  env_file="$DH_ENV_FILE"
+else
+  password="$(openssl rand -hex 24)"
+  printf '%s\n' POSTGRES_HOST=db POSTGRES_PORT=5432 POSTGRES_DB=foundation \
+    POSTGRES_USER=foundation "POSTGRES_PASSWORD=$password" > "$tmp/verify.env"
+  unset password
+  env_file="$tmp/verify.env"
+fi
 # --env-file replaces the project .env for interpolation; exported values make
 # the same settings visible to Compose regardless of how compose.yaml reads them.
-set -a; . "$tmp/verify.env"; set +a
-dc() { docker compose -p "$project" --env-file "$tmp/verify.env" "$@"; }
+set -a; . "$env_file"; set +a
+dc() { docker compose -p "$project" --env-file "$env_file" "$@"; }
 
 cleanup() {
   dc down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
@@ -40,9 +45,9 @@ trap cleanup EXIT
 records="[]"
 tree="$(worktree_tree)"   # docker-health must not change files; checked at the end
 write_evidence() {
-  jq -n --arg label "$label" --arg tree "$tree" --arg project "$project" \
+  jq -n --arg label "$label" --arg tree "$tree" --arg project "$project" --arg stage "$stage" \
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson checks "$records" '{
-      stage: "docker-health", label: $label, recorded_at: $at, worktree_tree: $tree,
+      stage: $stage, label: $label, recorded_at: $at, worktree_tree: $tree,
       compose_project: $project, checks: $checks }' > "$evidence"
 }
 record() {  # record <criterion> <PASS|FAIL> <detail>
