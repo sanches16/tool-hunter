@@ -8,6 +8,14 @@
       "source": "bundled",
       "installed_at": "2026-10-07T07:10:15.043761+00:00",
       "updated_at": "2026-10-07T07:10:15.043767+00:00"
+    },
+    "platform-poc-001": {
+      "name": "PLATFORM-POC-001 remainder (after HUMAN GATE #1)",
+      "version": "1.0.0",
+      "description": "Plan \u2192 tasks \u2192 analyze \u2192 implement \u2192 deterministic verification \u2192 CI \u2192 converge \u2192 optional critic for specs/001-foundation-health, starting from the approved HUMAN GATE #1 state. Human gates are mandatory, at most one repair cycle, no merge.",
+      "source": "local (project-authored, installed with specify workflow add)",
+      "installed_at": "2026-10-07T07:56:14.005922+00:00",
+      "updated_at": "2026-10-07T07:56:14.006018+00:00"
     }
   }
 }

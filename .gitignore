@@ -8,3 +8,12 @@
 
 # macOS
 .DS_Store
+
+# Spec Kit workflow run state and agent scratch output (machine-local)
+.specify/workflows/runs/
+.specify/.workflow-install.lock
+.agent-out/
+
+# Dependencies and build output
+node_modules/
+.next/

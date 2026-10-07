@@ -1,0 +1,267 @@
+schema_version: "1.0"
+workflow:
+  id: "platform-poc-001"
+  name: "PLATFORM-POC-001 remainder (after HUMAN GATE #1)"
+  version: "1.0.0"
+  author: "sanches16"
+  description: >-
+    Plan → tasks → analyze → implement → deterministic verification → CI →
+    converge → optional critic for specs/001-foundation-health, starting from
+    the approved HUMAN GATE #1 state. Human gates are mandatory, at most one
+    repair cycle, no merge.
+  # Roles: architect/reviewer = codex, implementer = claude,
+  # critic = grok (read-only shell step), verifier = shell + GitHub Actions.
+  integration: "codex"
+
+requires:
+  speckit_version: ">=1.0.12"
+  integrations:
+    any:
+      - "codex"
+      - "claude"
+
+steps:
+  # ── Entry guard ───────────────────────────────────────────────────────
+  - id: preflight
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/preflight.sh"'
+    timeout: 120
+
+  # ── Architect: plan ───────────────────────────────────────────────────
+  - id: plan
+    command: speckit.plan
+    integration: codex
+    input:
+      args: >-
+        Feature directory: specs/001-foundation-health. Plan PLATFORM-POC-001 from the
+        approved spec.md and constitution only (HUMAN GATE #1). Do not modify spec.md,
+        the constitution or the requirements checklist. Respect docs/poc/PLATFORM-POC-001.md
+        scope and exclusions. Do not write application code.
+
+  - id: plan-save-report
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" PLAN_REPORT "{{ context.run_id }}"'
+
+  - id: plan-validate
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/planning-artifacts.sh" plan'
+
+  - id: gate-2a
+    type: gate
+    message: >-
+      HUMAN GATE #2A: review specs/001-foundation-health/plan.md and its supporting
+      artifacts (research.md, data-model.md, contracts/, quickstart.md) before tasks
+      are generated.
+    show_file: specs/001-foundation-health/plan.md
+    options: [approve, reject]
+    on_reject: abort
+
+  - id: gate-2a-record
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2A "HUMAN GATE 2A plan review" "{{ steps.gate-2a.output.choice }}" "{{ context.run_id }}"'
+
+  # ── Architect: tasks + analyze ────────────────────────────────────────
+  - id: tasks
+    command: speckit.tasks
+    integration: codex
+    input:
+      args: >-
+        Feature directory: specs/001-foundation-health. Generate tasks from the
+        approved plan (HUMAN GATE #2A). Every task must trace to a requirement or
+        acceptance criterion; include lint, typecheck, test, build, Docker Compose
+        and GitHub Actions tasks. No out-of-scope work.
+
+  - id: tasks-validate
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/planning-artifacts.sh" tasks'
+
+  - id: analyze
+    command: speckit.analyze
+    integration: codex
+    input:
+      args: "Feature directory: specs/001-foundation-health. Read-only cross-artifact analysis."
+
+  - id: analyze-save-report
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" ANALYZE "{{ context.run_id }}"'
+
+  - id: gate-2b
+    type: gate
+    message: >-
+      HUMAN GATE #2B: review specs/001-foundation-health/tasks.md and
+      reviews/ANALYZE.md. Approve authorizes Claude to implement exactly these tasks.
+    show_file: specs/001-foundation-health/reviews/ANALYZE.md
+    options: [approve, reject]
+    on_reject: abort
+
+  - id: gate-2b-record
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2B "HUMAN GATE 2B tasks and analyze review" "{{ steps.gate-2b.output.choice }}" "{{ context.run_id }}"'
+
+  # ── Implementer ───────────────────────────────────────────────────────
+  - id: implement
+    command: speckit.implement
+    integration: claude
+    input:
+      args: >-
+        Feature directory: specs/001-foundation-health. Implement only the tasks in
+        tasks.md approved at HUMAN GATE #2B, using repository artifacts as the only
+        context. Do not modify spec.md, plan.md or the constitution. No catalog, Avito,
+        auth, backup, orchestration or other out-of-scope work. Run the relevant local
+        checks. Write specs/001-foundation-health/reviews/IMPLEMENTATION_REPORT.md
+        listing completed task ids, checks run with results, and every deviation.
+        Do not commit. Stop after implementation.
+
+  # ── Deterministic verification ────────────────────────────────────────
+  - id: local-checks
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh"'
+    timeout: 1800
+
+  - id: docker-health
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh"'
+    timeout: 1200
+
+  - id: implement-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "feat: implement PLATFORM-POC-001 foundation health (run {{ context.run_id }})"'
+
+  - id: ci
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/ci.sh"'
+    timeout: 2400
+
+  # ── Reviewer: converge ────────────────────────────────────────────────
+  - id: converge
+    command: speckit.converge
+    integration: codex
+    input:
+      args: >-
+        Feature directory: specs/001-foundation-health. Compare the actual
+        implementation with the constitution, spec.md, plan.md, tasks.md and
+        acceptance criteria (not the implementer's summary). Append traceable tasks
+        only for real gaps. List each gap with requirement id and file evidence.
+
+  - id: converge-save-report
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" CONVERGE "{{ context.run_id }}"'
+
+  - id: converge-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record Codex convergence (run {{ context.run_id }})"'
+
+  - id: converge-review
+    type: gate
+    message: >-
+      Convergence review (reviews/CONVERGE.md). accept = go to critic and final gate;
+      repair = ONE Claude repair cycle for the appended tasks, then full re-verification
+      and re-convergence (no further repairs without a new decision); abort = stop.
+    show_file: specs/001-foundation-health/reviews/CONVERGE.md
+    options: [accept, repair, abort]
+    on_reject: abort
+
+  # ── Single bounded repair cycle (flat steps so resume never re-runs Claude) ──
+  - id: repair-implement
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-implement-run
+        command: speckit.implement
+        integration: claude
+        input:
+          args: >-
+            Feature directory: specs/001-foundation-health. Repair cycle 1 of 1: implement
+            only the open tasks appended by convergence (see reviews/CONVERGE.md). Same scope
+            rules as before. Append a "Repair cycle 1" section to
+            reviews/IMPLEMENTATION_REPORT.md. Do not commit. Stop after the repair.
+
+  - id: repair-local-checks
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-local-checks-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh"'
+        timeout: 1800
+
+  - id: repair-docker-health
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-docker-health-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh"'
+        timeout: 1200
+
+  - id: repair-commit
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-commit-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "fix: PLATFORM-POC-001 repair cycle 1 (run {{ context.run_id }})"'
+
+  - id: repair-ci
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-ci-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/ci.sh"'
+        timeout: 2400
+
+  - id: repair-converge
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-converge-run
+        command: speckit.converge
+        integration: codex
+        input:
+          args: >-
+            Feature directory: specs/001-foundation-health. Re-converge after repair
+            cycle 1 against the same artifacts. Report remaining gaps; do not start
+            another repair.
+
+  - id: repair-converge-save
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-converge-save-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" CONVERGE_AFTER_REPAIR "{{ context.run_id }}"'
+
+  - id: repair-converge-commit
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-converge-commit-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record re-convergence after repair (run {{ context.run_id }})"'
+
+  # ── Optional read-only critic (failure never blocks the PoC) ──────────
+  - id: critic
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/grok-critic.sh"'
+    timeout: 1800
+    continue_on_error: true
+
+  - id: critic-commit
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "docs: record Grok read-only critique (run {{ context.run_id }})" specs/001-foundation-health/reviews/GROK_CRITIC.md'
+
+  # ── Final human promotion gate (no merge here; auto-merge forbidden) ──
+  - id: final-gate
+    type: gate
+    message: >-
+      FINAL HUMAN GATE for PLATFORM-POC-001. Review spec, plan, tasks, the diff
+      (git diff 288cdc7..HEAD), CI result, reviews/CONVERGE*.md, reviews/GROK_CRITIC.md
+      (if present) and reviews/IMPLEMENTATION_REPORT.md. approve = merge allowed, done
+      manually by a human via PR; request-changes = stop for a new decision; abort = stop.
+    options: [approve, request-changes, abort]
+    on_reject: abort
+
+  - id: final-gate-record
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_FINAL "FINAL HUMAN GATE" "{{ steps.final-gate.output.choice }}" "{{ context.run_id }}"'
