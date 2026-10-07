@@ -1,99 +1,108 @@
 # ANALYZE
 
-Source: Codex final message, workflow run b73c2c64, base commit 89855f1
+Source: Codex final message, workflow run 44d3dbd2, base commit 2258d98
 
 ## Specification Analysis Report
 
-Read-only review of `specs/001-foundation-health`, including the binding workflow rules. **13 checks PASS; 3 checks have FINDINGs.** No files were modified. PASS means artifact consistency, not runtime verification or implementation approval.
+**Result: 17 checks PASS; 3 checks FINDING.** Four issues identified, including one that blocks the first implementation run.
+
+Read-only analysis completed for `specs/001-foundation-health`. No files changed. PASS means the artifacts and script logic satisfy the check; runtime verification was not executed.
+
+Evidence paths below use these prefixes:
+
+- `S`, `P`, `T`: `specs/001-foundation-health/{spec,plan,tasks}.md`
+- `W`: `.specify/workflows/platform-poc-001/workflow.yml`
+- `C/`: `.specify/workflows/platform-poc-001/checks/`
 
 ### Findings
 
-Paths below are relative to `.specify/workflows/platform-poc-001/` unless prefixed with `tasks.md`.
-
 | ID | Category | Severity | Location(s) | Summary | Recommendation |
 |---|---|---|---|---|---|
-| I1 | Inconsistency | MEDIUM | [tasks.md:101](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:101); [commit-push.sh:37](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/commit-push.sh:37) | The matrix attributes dependency, image-exclusion and ignored/untracked environment review to `implement-commit`. Its script checks protected artifacts, staged paths and selected secret patterns, but does not perform all those reviews or produce their evidence. | Assign the missing reviews to explicit producers, or narrow the matrix row to the checks actually performed. |
-| I2 | Inconsistency | HIGH | [grok-critic.sh:15](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/grok-critic.sh:15); [workflow.yml:660](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/workflow.yml:660) | Grok’s exit status is discarded with `|| true`. Any nonempty output—including error output—becomes `GROK_CRITIC.md`; the workflow then records “participated: read-only critic report produced.” A failed invocation can therefore be recorded as a completed critique. | Preserve the exit status and validate report completion. Record failed/skipped critique as not performed, while retaining sanitized failure evidence. |
-| U1 | Underspecification | MEDIUM | [tasks.md:52](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:52); [local-checks.sh:91](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/local-checks.sh:91) | The request validator does not enforce the complete required schema: `body` may be absent, indexes/statuses may be fractional, elapsed time may be negative, and loss/recovery identity fields may be missing. | Require mandatory keys, integer fields, nonnegative timing, optional-field types and loss/recovery identity fields. |
+| I1 | Inconsistency | HIGH | T:L70; W:L374–381; C/safety-review.sh:L85–86; C/commit-push.sh:L30 | T017 creates `.env.example`. Safety-review then requires it in the Git index, but staging happens only afterward in implement-commit. The file is currently untracked/not present in the index, so the first implementation run will fail this gate. | Have trusted shell prepare the candidate index before safety-review, or validate the candidate example before staging and enforce tracking afterward. |
+| I2 | Inconsistency | HIGH | S:L178; T:L111; W:L64–67; C/record-evidence.sh:L201–204,L229 | Skipped critique requires findings recorded as `not performed`; the metrics input and writer accept only an integer and always print a numeric findings count. | Derive nonparticipation from structured critic evidence and emit `not performed`; require a count only for participation. |
+| C1 | Coverage | MEDIUM | T:L106; W:L407–409 | The matrix promises a **recorded enforcement outcome**, including failures in RESULT. `verification-enforce` only prints and exits; no step retains that outcome in RESULT. | Produce structured enforcement evidence and record it, including failure, before stopping. |
+| C2 | Coverage | MEDIUM | T:L82,L113; P:L180; C/record-gate.sh:L23–50; W:L725–731 | The final decision is committed in a review file, but no subsequent step links or writes it into RESULT. T021’s final-decision placeholder can remain pending. | Record the final gate decision and reviewed revision in RESULT, or link its decision artifact there before final enforcement. |
 
-**U1 reproduced:** the existing jq validator returned exit **0 / true** for records with missing bodies, fractional indexes, negative elapsed times and missing loss identity.
+### Required workflow checks
 
-### Binding workflow checks
+| # | Check | Status | File:line evidence / conclusion |
+|---:|---|---|---|
+| 1 | Every buildable FR/SC has a checkbox task | **PASS** | T:L30–82 covers all buildable portions; coverage below. |
+| 2 | Process/human obligations have stage, owner and evidence | **PASS** | T:L88–113 contains explicit traceability rows. Producer mismatches are reported under check 7. |
+| 3 | No unchecked task requires prohibited execution | **PASS** | T:L24,L30–82: all 21 checkboxes require file edits; command execution belongs to the matrix. |
+| 4 | No human decision/rating delegated to an agent | **PASS** | T:L96,L111–113; W:L297–310,L685–702,L712–727 assigns decisions and ratings to Human. |
+| 5 | I1 manifest/config/lockfile ownership | **PASS** | T:L24,L30–32: T001 exclusively owns `package.json`; T002/T003 own their configuration; shell generates lockfile. |
+| 6 | A1 deterministic cleanup parameters | **PASS** | T:L53 specifies five repetitions, ≤1000 ms post-response grace, own active sockets, baseline restoration and ≤5000 ms HTTP deadline. |
+| 7 | Matrix stages and evidence producers match reality | **FINDING** | All named stages exist. I1, C1 and C2 expose mismatches at T:L101,L106,L113. Core local/Docker/CI/results producers exist: C/local-checks.sh:L81–91; C/docker-health.sh:L94–123; C/ci.sh:L43–81; C/record-evidence.sh:L42–127. |
+| 8 | T001/T015/T016 consume supplied inputs | **PASS** | T:L30,L68–69; W:L321–338 supplies exact versions and digests without implementer lookup. |
+| 9 | Prerequisite invocations explicitly use bash | **PASS** | W:L319,L497 are the two invocations; both use `bash`. Git tracks the script as `100644`. |
+| 10 | Explicit specification/plan/tasks-review rows | **PASS** | T:L94–96 maps preflight, plan-approved and gate-2b + gate-2b-record to their human records. |
+| 11 | Complete tool-version producer | **PASS** | C/record-evidence.sh:L145–171 records all eight tools; W:L401,L674 invokes initial and critic participation updates. |
+| 12 | Fresh checkout producer and cleanup | **PASS** | W:L389–393; C/fresh-checkout.sh:L17–76 clones origin at pushed SHA, configures from the example, runs lifecycle, checks zero source edits and cleans up. |
+| 13 | Both independent resume assessments | **PASS** | W:L412–436; C/resume-assessment.sh:L20–74 uses fresh clones, restricted agents, unchanged-clone checks and revision-linked reports. |
+| 14 | Request evidence producer/validator/retention | **PASS** | T:L52–53; C/local-checks.sh:L85–90; C/record-evidence.sh:L57–63,L84–87. |
+| 15 | Both CI events required to succeed | **PASS** | C/ci.sh:L43–81 observes both events and computes joint success; W:L409 enforces that conclusion. |
+| 16 | Structured Grok participation | **PASS** | C/grok-critic.sh:L16–26,L37–51 retains exit code and removes failed/stale reports; C/record-evidence.sh:L130–141 requires success plus report. |
+| 17 | Strict JSONL schema and preflight self-test | **PASS** | C/validate-observations.sh:L20–60 enforces exact keys/body, indices/status, timing, phase counts and identity; C/selftest-observations.sh:L30–58 defines negative cases; C/preflight.sh:L53 invokes them. |
+| 18 | Safety-review precedes commit and fulfills obligations | **FINDING** | W:L374–381 has correct order; C/safety-review.sh:L22–105 implements the review categories, but its tracked-example requirement blocks this order: **I1**. |
+| 19 | implement-commit has appropriately limited responsibility | **PASS** | T:L102 assigns dependency/env/context/scope review to safety-review; C/commit-push.sh:L23–58 performs staging guards, commit, push and origin/clean-tree verification. |
+| 20 | RESULT receives all listed evidence | **FINDING** | C/record-evidence.sh:L42–127,L145–193 provides verification/toolchain/report links; W:L432,L460,L674,L702 connects producers. FR-013’s skipped-critic findings representation conflicts with requirements: **I2**. |
 
-| # | Check | Result | Evidence |
+### Coverage Summary
+
+“Task coverage” includes buildable portions of mixed requirements. Process execution remains workflow-owned.
+
+| Requirement | Has Task? | Task IDs | Notes |
 |---|---|---|---|
-| 1 | Every buildable requirement has a checkbox implementation task | **PASS** | Tasks T001–T021 cover application, tests, configuration, CI, scripts and documentation: [tasks.md:30](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:30), [tasks.md:82](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:82). |
-| 2 | Process/human requirements have stage, owner and evidence entries | **PASS** | Explicit traceability matrix: [tasks.md:92](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:92). Producer discrepancies are reported under check 7. |
-| 3 | No unchecked task requires forbidden execution or human action | **PASS** | All 21 checkboxes describe file edits; execution is explicitly workflow-owned: [tasks.md:24](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:24), [tasks.md:162](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:162). |
-| 4 | Human decisions, approvals and ratings remain human-owned | **PASS** | Human review/metrics/final-decision rows: [tasks.md:94](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:94), [tasks.md:110](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:110); owner-only inputs: [workflow.yml:674](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/workflow.yml:674). |
-| 5 | I1: manifest ownership and no implementer-created lockfile | **PASS** | T001 solely owns `package.json`; T002/T003 have their own configurations: [tasks.md:30](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:30). Shell generates the lockfile: [local-checks.sh:34](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/local-checks.sh:34). |
-| 6 | A1: deterministic T010 cleanup parameters | **PASS** | All five parameters and unchanged HTTP deadline are explicit: [tasks.md:53](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:53). |
-| 7 | Matrix stages exist and scripts produce promised evidence | **FINDING — I1** | Every named stage exists. Core local, Docker, CI and recording producers exist, but the `implement-commit` review attribution exceeds its script: [tasks.md:101](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:101), [commit-push.sh:37](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/commit-push.sh:37). |
-| 8 | T001/T015/T016 consume supplied versions/digests | **PASS** | Explicit supplied-value instructions: [tasks.md:30](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:30), [tasks.md:68](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:68), [tasks.md:69](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:69). |
-| 9 | Prerequisite-script workflow invocations use `bash` | **PASS** | Both invocations explicitly use `bash`: [workflow.yml:319](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/workflow.yml:319), [workflow.yml:492](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/workflow.yml:492). Git mode verified as `100644`. |
-| 10 | Explicit specification, plan and tasks/analyze review rows | **PASS** | All three required rows appear: [tasks.md:94](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:94). |
-| 11 | Tool-version producer records all tools and Grok participation | **FINDING — I2** | All eight tools have a producer: [record-evidence.sh:122](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/record-evidence.sh:122). Grok’s participation classification can falsely claim a completed critique: [workflow.yml:660](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/workflow.yml:660). |
-| 12 | Fresh checkout verifies the pushed SHA and documented lifecycle | **PASS** | Canonical clone, generated configuration, lifecycle, zero source edits and cleanup: [fresh-checkout.sh:17](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/fresh-checkout.sh:17), [fresh-checkout.sh:39](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/fresh-checkout.sh:39). |
-| 13 | Fresh read-only Claude/Codex resume assessments are retained and linked | **PASS** | Fresh clones, restricted processes and unchanged-clone checks: [resume-assessment.sh:28](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/resume-assessment.sh:28). RESULT links: [workflow.yml:425](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/workflow.yml:425). |
-| 14 | Request evidence has producer, schema/secret validator and retention | **FINDING — U1** | Producer required by T009/T010; retention exists at [record-evidence.sh:61](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/record-evidence.sh:61). Schema validation is incomplete: [local-checks.sh:91](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/local-checks.sh:91). |
-| 15 | Both push and pull_request CI must succeed | **PASS** | Aggregate success requires both events: [ci.sh:75](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/ci.sh:75). Enforcement consumes that result: [workflow.yml:404](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/workflow.yml:404). |
-| 16 | RESULT receives every required evidence path/block | **PASS** | Verification/observations/CI: [record-evidence.sh:56](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/record-evidence.sh:56); toolchain/reports/metrics: [record-evidence.sh:122](/Users/sanches16/Projects/tool-hunter/.specify/workflows/platform-poc-001/checks/record-evidence.sh:122). Resume, convergence and critic links are wired in workflow steps. I2 affects evidence validity, not the existence of these paths. |
-
-### Coverage summary
-
-Representative task mappings below distinguish buildable work from process execution.
-
-| Requirement | Has task? | Task IDs | Notes |
-|---|---|---|---|
-| FR-001 | Yes | T001, T005, T015–T019 | Local foundation and lifecycle |
-| FR-002 | Yes | T008–T009, T011, T013–T014 | Fresh SQL evidence |
-| FR-003 | Yes | T006, T014 | Exact healthy response |
-| FR-004 | Yes | T007–T011, T013–T014, T016 | Failure/recovery |
-| FR-005 | Yes | T006–T011, T013–T014 | Deadline and cleanup |
-| FR-006 | Yes | T008, T010, T012, T014, T016–T018 | Environment configuration |
-| FR-007 | Yes | T004, T006, T010, T012–T020 | Secrets and safe configuration |
+| FR-001 | Yes | T001, T005, T015–T016, T018–T019 | Foundation/startup |
+| FR-002 | Yes | T008–T009, T011, T013–T014 | Fresh SQL |
+| FR-003 | Yes | T006, T009, T011, T013–T014 | Healthy contract |
+| FR-004 | Yes | T006–T011, T013–T014, T016 | Failure/recovery |
+| FR-005 | Yes | T006–T011, T013–T014 | Deadlines |
+| FR-006 | Yes | T008, T010, T012, T014, T016–T018 | Configuration |
+| FR-007 | Yes | T004, T006, T008, T010, T012–T020 | Secret exclusion |
 | FR-008 | Yes | T018 | Fresh-checkout documentation |
-| FR-009 | Yes | T001–T003, T006–T011, T019–T020 | Independent verification |
-| FR-010 | Yes | T020 | CI implementation; observation in matrix |
-| FR-011 | Yes | T021 | Repository records; retention/resume in matrix |
-| FR-012 | Workflow | — | Human reviews, convergence, critique and promotion |
-| FR-013 | Yes | T021 | Result structure; actual values workflow-owned |
-| FR-014 | Yes | T001, T005, T020 | Tooling/scope constraints; final stop in matrix |
-| SC-001 | Yes | T015, T018 | Fresh-checkout execution in matrix |
-| SC-002 | Yes | T006, T008–T009, T013 | 10/10/10 classification |
-| SC-003 | Yes | T006–T010, T013 | Timed acceptance runs |
-| SC-004 | Yes | T001–T003, T006, T009, T011, T019–T020 | Five checks and false-health control |
+| FR-009 | Yes | T001–T003, T005–T011, T015, T018–T020 | Verification infrastructure |
+| FR-010 | Yes | T020 | CI; observation workflow-owned |
+| FR-011 | Yes | T021 | Records; retention workflow-owned |
+| FR-012 | Workflow | — | Reviews/convergence/decisions, T:L94–113 |
+| FR-013 | Yes | T021 | Result structure; values workflow-owned |
+| FR-014 | Yes | T001, T005, T020–T021 | Tooling/scope; acceptance workflow-owned |
+| SC-001 | Yes | T015, T018 | Fresh-checkout execution workflow-owned |
+| SC-002 | Yes | T006, T008–T009, T013 | 10/10/10 sequence |
+| SC-003 | Yes | T006–T010, T013 | Timing/fault coverage |
+| SC-004 | Yes | T001–T003, T006, T008–T011, T019–T020 | Independent checks |
 | SC-005 | Yes | T020 | Both CI paths |
-| SC-006 | Yes | T021 | Record structure; resume/gates in matrix |
-| SC-007 | Yes | T004, T010, T015, T017 | Secret/scope safeguards; final review in matrix |
-| SC-008 | Yes | T021 | Complete result structure; human acceptance in matrix |
+| SC-006 | Yes | T021 | Records/resumption workflow-owned |
+| SC-007 | Yes | T004, T010, T015, T017, T021 | Review execution workflow-owned |
+| SC-008 | Yes | T021 | Result structure; human outcome workflow-owned |
 
-**Unmapped tasks:** None. No blocking coverage gaps, duplicate requirements, unresolved design placeholders or contradictory task ordering were found. T021’s pending placeholders intentionally await workflow evidence.
+**Unmapped tasks:** None.
 
 ### Constitution alignment
 
-Active constitution: **v1.0.0**. No direct MUST conflict identified.
+Active constitution: **v1.0.0**. No direct constitutional conflict identified.
 
-| Principle | Assessment |
+| Principle | Assessment and evidence |
 |---|---|
-| I — Spec before code | Renewed Gate 2B remains required; analysis authorizes no implementation (`tasks.md:11`). |
-| II — Canonical repository | Reviewable canonical patches and protected artifacts are retained (`plan.md:67`). |
-| III — Deterministic evidence | Commands and revision-linked records are defined; I2/U1 identify evidence weaknesses requiring correction. |
-| IV — Independent tests | Five checks and pass conditions are specified (`plan.md:176`). |
-| V — Bounded scope | Foundation-only scope is preserved (`tasks.md:86`); I1 identifies an overstated review producer. |
-| VI — Human promotion | Final human gate and manual promotion remain explicit (`workflow.yml:698`). |
-| VII — Secrets | Safe templates, ignore rules and staged-content checks are specified (`tasks.md:33`, `commit-push.sh:45`). |
-| VIII — Existing orchestration | Spec Kit, Git, native CLIs and deterministic CI; prohibited components remain excluded (`plan.md:73`). |
-| Governance | v1.0.0 is identified; no waiver or amendment is proposed (`plan.md:74`). |
+| I — Spec before code | PASS: T:L9–11 preserves approvals and requires renewed Gate 2B. Approved spec/plan blobs match. |
+| II — Canonical repository | PASS: P:L67; W:L139,L353 requires preserved artifacts and reviewable changes. |
+| III — Deterministic evidence | PASS in design: T:L90 keeps failing/missing evidence incomplete. Retention gaps C1/C2 need correction. |
+| IV — Independent verification | PASS: P:L171–185; T019/T020 specify independently executable checks. |
+| V — Scope control | PASS: S:L238–248; T:L86 excludes additional work. |
+| VI — Human promotion | PASS: T:L113; W:L712–731 retains explicit Human control. |
+| VII — Secrets | PASS in design: T004/T015/T017/T020 and staged guard cover exclusion/review. Runtime safety is unverified. |
+| VIII — Existing process tooling | PASS: S:L264; P:L73; T:L163 explicitly checks prohibited tooling. |
+| Governance | PASS: S:L265–268; P:L74 preserves constitutional authority and renewed human review. |
 
 ### Metrics and next actions
 
-- Requirements: **22** — 14 FRs and 8 SCs.
-- Buildable requirements: **21**, covered **21/21 (100%)**; FR-012 has workflow coverage.
-- Tasks: **21**, all unchecked and mapped.
-- Findings: **3** — 1 HIGH, 2 MEDIUM.
-- Ambiguities: **0**; duplications: **0**; CRITICAL issues: **0**.
+- Requirements inventoried: **22** — 14 FR + 8 SC.
+- Buildable requirement portions: **21**, all task-covered (**100%**).
+- Tasks: **21**, all unchecked; unmapped: **0**.
+- Findings: **4** — HIGH: **2**, MEDIUM: **2**, CRITICAL: **0**.
+- Ambiguities: **0**; duplications: **0**.
 
-Resolve I1, I2 and U1, then rerun `$speckit-analyze` before renewed HUMAN GATE #2B and `$speckit-implement`. Workflow corrections should remain separate from implementer checkbox tasks.
+Resolve I1 before `$speckit-implement`; correct I2 and evidence retention gaps before acceptance. Then rerun `$speckit-analyze` and obtain renewed HUMAN GATE #2B. Workflow fixes require a separately authorized editing step; none were applied.
 
-Would you like me to suggest concrete remediation edits for these three issues?
+Would you like me to suggest concrete remediation edits for these four issues?
