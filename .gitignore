@@ -17,3 +17,14 @@
 # Dependencies and build output
 node_modules/
 .next/
+/out/
+/build/
+*.tsbuildinfo
+npm-debug.log*
+
+# Generated private test configuration and evidence intermediates
+# (versioned sanitized evidence lives under docs/poc/evidence/ and stays tracked)
+tests/.generated/
+scripts/.generated/
+.test-runs/
+*.private.*
