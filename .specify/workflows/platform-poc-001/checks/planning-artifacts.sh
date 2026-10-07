@@ -29,9 +29,13 @@ if [ "$stage" = "tasks" ]; then
   pass "tasks.md has $count uniquely numbered tasks"
 fi
 
-# Scope guard: planning must not pull in excluded PoC scope.
-if grep -niE '\b(avito|telegram|oauth|next-auth|ruflo|cline|backup|restore|caddy|tailscale|auto-?merge)\b' \
-     "$plan" ${tasks:-} | grep -viE 'out of scope|not (in scope|implement)|exclu|must not|no (auth|backup)'; then
+# Scope guard: planning must not pull in excluded PoC scope. Lines that state
+# exclusions (no/not/never/without/forbidden/excluded/out of scope ...) are
+# allowed to name excluded items; "restore" alone is not flagged because the
+# spec requires restoring the database after a stop (only backup is excluded).
+if grep -niE '\b(avito|telegram|oauth|next-auth|ruflo|cline|backups?|caddy|tailscale|auto-?merge)\b' \
+     "$plan" ${tasks:-} \
+   | grep -viE '\b(no|not|never|without|forbid(den)?|prohibit(ed)?|exclu(de|ded|des|sion|sions)|out of scope|must not|do not|don.t)\b'; then
   fail "planning artifacts reference excluded scope (see lines above)"
 fi
 pass "no excluded scope in planning artifacts"
