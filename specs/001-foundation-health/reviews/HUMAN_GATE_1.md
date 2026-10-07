@@ -68,3 +68,15 @@ Implementation MUST NOT begin until HUMAN GATE #2 approves the active plan and t
 ## Result
 
 `PASS — APPROVED FOR PLANNING`
+
+## Post-review Spec Kit state correction
+
+`.specify/feature.json` was committed in `ec304ce` by mistake. In Spec Kit 1.0.12, `.specify/.gitignore` declares it machine-local feature-selection state ("per-checkout state rather than something to share"), so it must not be tracked in Git.
+
+Correction (separate commit, no history rewrite):
+
+- `.specify/feature.json` removed from Git tracking; the local file is kept on disk and stays ignored by the canonical `.specify/.gitignore`.
+- The canonical feature directory remains `specs/001-foundation-health`.
+- The blob listed above for `.specify/feature.json` documents what was reviewed; it is not part of the tracked approval baseline going forward.
+
+This correction does not change the constitution, `spec.md`, the requirements checklist, the approved HTTP contract, the five-second health bound, or the scope of HUMAN GATE #1.
