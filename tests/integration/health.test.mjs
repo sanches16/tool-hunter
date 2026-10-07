@@ -30,7 +30,8 @@ import {
 // HTTP server or network. The real-container suites run the 10 healthy -> 10 database-loss -> 10
 // recovery lifecycle against the production image and PostgreSQL 17 (T008/T009 subset), 5
 // repeated requests against a silent PostgreSQL listener with socket-cleanup checks (T007/T010 subset),
-// and 12 missing/empty/invalid runtime-configuration scenarios without any database (T010 subset).
+// 12 missing/empty/invalid runtime-configuration scenarios without any database, and one request
+// each against a PostgreSQL that rejects authentication and a target that refuses TCP 5432 (T010).
 
 const VALID_ENV = Object.freeze({
   POSTGRES_HOST: "db.internal",
@@ -1454,5 +1455,236 @@ describe("runtime configuration faults (production image, no database)", () => {
         throw primaryError;
       }
     },
+  );
+});
+
+// --- Authentication failure + cold refused connection (connection-failure part of T010) --------
+//
+// Two separate owned projects, one per scenario, each with its own profile: the production app
+// image pointed at (A) a real, healthy PostgreSQL 17 (`db-auth`) with the generated valid DB/user
+// but a different generated password, or (B) an in-network target (`refused-target`) that is
+// resolvable by Compose DNS and running but has nothing listening on TCP 5432. One real GET per
+// scenario. Same ownership, failure, cleanup and output rules as the suites above; neither password
+// nor any driver/transport error text is ever printed, only scenario names and timings.
+
+/**
+ * Runs inside the app container and reports only through its exit status: 0 only when a TCP
+ * connection to refused-target:5432 (resolved by Compose DNS) is actively refused.
+ */
+const REFUSED_PORT_CHECK =
+  "const socket = require('node:net').connect(5432, 'refused-target');" +
+  "socket.setTimeout(2000, () => process.exit(2));" +
+  "socket.on('connect', () => process.exit(1));" +
+  "socket.on('error', (error) => process.exit(error.code === 'ECONNREFUSED' ? 0 : 3));";
+/** Compares the container's password with the suite's wrong password, which docker passes by name. */
+const WRONG_PASSWORD_CHECK =
+  "process.exit(process.env.POSTGRES_PASSWORD !== '' && " +
+  "process.env.POSTGRES_PASSWORD === process.env.POSTGRES_WRONG_PASSWORD ? 0 : 1);";
+
+async function assertNoHostPorts(fixture, id, what) {
+  const bindings = parseJson(
+    await docker(
+      fixture,
+      ["inspect", "--format", "{{json .HostConfig.PortBindings}}", id],
+      `inspect ${what} port bindings`,
+      COMPOSE_STEP_TIMEOUT_MS,
+    ),
+    `inspect ${what} port bindings`,
+  );
+  assert.ok(
+    bindings === null || Object.keys(bindings).length === 0,
+    `${what} must not publish any host port`,
+  );
+}
+
+async function assertTargetRunning(fixture, service, when) {
+  const id = await containerId(fixture, service);
+  const state = await containerState(fixture, id, `inspect ${service} container`);
+  assert.equal(state.running, true, `${when}: ${service} container is not running`);
+  return id;
+}
+
+/**
+ * One connection-failure scenario in its own owned project: build, bounded start, pre-request
+ * checks, one exact-503 request, same-app checks, then cleanup on every path.
+ */
+async function runConnectionFailureScenario(t, { name, prefix, profile, target, app, prepare, check }) {
+  const fixture = createFixture(prefix, ["--profile", profile]);
+  let owned = false;
+  let primaryError;
+
+  try {
+    // Missing Docker or Compose is a hard failure, never a skip.
+    await docker(
+      fixture,
+      ["compose", "version"],
+      "Docker/Compose availability check (required; this test never skips)",
+      COMPOSE_CHECK_TIMEOUT_MS,
+    );
+    prepare?.(fixture);
+
+    owned = true;
+    // Phase 1: image build only, so a failure says whether build or readiness failed.
+    await compose(
+      fixture,
+      ["build", app],
+      `${name} startup phase 1/2 (build ${app} image)`,
+      COMPOSE_UP_TIMEOUT_MS,
+    );
+    // Phase 2: start and bounded wait. Fail-fast, no retry; on failure only sanitized state.
+    try {
+      await compose(
+        fixture,
+        [
+          "up",
+          "-d",
+          "--no-build",
+          "--wait",
+          "--wait-timeout",
+          String(COMPOSE_WAIT_TIMEOUT_S),
+          target,
+          app,
+        ],
+        `${name} startup phase 2/2 (start + bounded wait)`,
+        SILENT_START_TIMEOUT_MS,
+      );
+    } catch (startError) {
+      const report = await silentStartupDiagnostics(fixture, [target, app]);
+      throw new assert.AssertionError({
+        message: `${startError instanceof Error ? startError.message : "startup failed"}; sanitized service state: ${report}`,
+      });
+    }
+
+    const targetId = await assertTargetRunning(fixture, target, "before the request");
+    await assertNoHostPorts(fixture, targetId, target);
+
+    const appId = await containerId(fixture, app);
+    const appState = await containerState(fixture, appId, "inspect app container");
+    assert.equal(appState.running, true, "app container is not running after startup");
+    assert.ok(appState.startedAt.length > 0, "app container StartedAt is missing");
+    const identity = { id: appId, startedAt: appState.startedAt };
+
+    // Complete configuration aimed at the target (exit status only), so the 503 cannot come from a
+    // configuration fault. Only the non-secret host and port are compared literally.
+    await docker(
+      fixture,
+      [
+        "exec",
+        appId,
+        "node",
+        "-e",
+        ENV_SHAPE_CHECK,
+        JSON.stringify({
+          POSTGRES_HOST: { equals: target },
+          POSTGRES_PORT: { equals: "5432" },
+          POSTGRES_DB: "set",
+          POSTGRES_USER: "set",
+          POSTGRES_PASSWORD: "set",
+        }),
+      ],
+      "app container environment does not match the scenario",
+      COMPOSE_STEP_TIMEOUT_MS,
+    );
+    await check(fixture, { targetId, appId });
+
+    const baseUrl = await appHttpBaseUrl(fixture, app);
+    const { response, elapsedMs } = await withContext(`${name} request`, () =>
+      timedHealthRequest(baseUrl),
+    );
+    // Exact HTTP 503 degraded/ok/unavailable + no-store, <=5000 ms monotonic.
+    await withContext(`${name} request`, () => assertUnavailableResponse(response, { elapsedMs }));
+
+    await assertTargetRunning(fixture, target, "after the request");
+    await assertSameRunningApp(fixture, identity, "after the request", app);
+    await assertNoCrashEvidence(fixture, appId);
+    t.diagnostic(`${name}: exact HTTP 503 in ${Math.round(elapsedMs)} ms`);
+  } catch (error) {
+    primaryError = error;
+  }
+
+  // Always runs, on success and on every failure path: removes only this run's containers,
+  // network, volumes and locally built image (the profile is selected so its services are included).
+  if (owned) {
+    try {
+      await compose(
+        fixture,
+        ["down", "-v", "--remove-orphans", "--rmi", "local", "--timeout", "5"],
+        "owned fixture cleanup",
+        COMPOSE_DOWN_TIMEOUT_MS,
+      );
+    } catch (cleanupError) {
+      if (primaryError === undefined) {
+        primaryError = cleanupError;
+      } else {
+        t.diagnostic("owned fixture cleanup also failed");
+      }
+    }
+  }
+  if (primaryError !== undefined) {
+    throw primaryError;
+  }
+}
+
+describe("real connection failures (production image)", () => {
+  test(
+    "auth-failure: healthy PostgreSQL 17 rejects a wrong password -> exact 503 <=5000 ms, same app process",
+    { timeout: LIFECYCLE_TIMEOUT_MS },
+    (t) =>
+      runConnectionFailureScenario(t, {
+        name: "auth-failure",
+        prefix: "toolhunter-d2c3-auth",
+        profile: "auth-failure",
+        target: "db-auth",
+        app: "app-auth",
+        prepare: (fixture) => {
+          fixture.env.POSTGRES_WRONG_PASSWORD = randomBytes(24).toString("base64url");
+          // Not assert.notEqual: its failure message would echo both values.
+          assert.ok(
+            fixture.env.POSTGRES_WRONG_PASSWORD !== fixture.env.POSTGRES_PASSWORD,
+            "generated wrong password must differ from the valid one",
+          );
+        },
+        check: async (fixture, { targetId, appId }) => {
+          const health = parseJson(
+            await docker(
+              fixture,
+              ["inspect", "--format", "{{json .State.Health.Status}}", targetId],
+              "inspect db-auth health",
+              COMPOSE_STEP_TIMEOUT_MS,
+            ),
+            "inspect db-auth health",
+          );
+          assert.ok(health === "healthy", "db-auth must be healthy before the request");
+          // `-e NAME` without a value makes docker forward it from its own (child) environment, so
+          // the password never appears on a command line; only the exit status is read.
+          await docker(
+            fixture,
+            ["exec", "-e", "POSTGRES_WRONG_PASSWORD", appId, "node", "-e", WRONG_PASSWORD_CHECK],
+            "app container does not use the generated wrong password",
+            COMPOSE_STEP_TIMEOUT_MS,
+          );
+        },
+      }),
+  );
+
+  test(
+    "cold-refused: resolvable running target with nothing on 5432 -> exact 503 <=5000 ms, same app process",
+    { timeout: LIFECYCLE_TIMEOUT_MS },
+    (t) =>
+      runConnectionFailureScenario(t, {
+        name: "cold-refused",
+        prefix: "toolhunter-d2c3-refused",
+        profile: "cold-refused",
+        target: "refused-target",
+        app: "app-refused",
+        check: (fixture, { appId }) =>
+          // From the app's own network view: the name resolves and TCP 5432 is actively refused.
+          docker(
+            fixture,
+            ["exec", appId, "node", "-e", REFUSED_PORT_CHECK],
+            "refused-target:5432 is not resolvable-and-refused from the app container",
+            COMPOSE_STEP_TIMEOUT_MS,
+          ),
+      }),
   );
 });

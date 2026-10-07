@@ -1,6 +1,6 @@
 # Isolated test fixture (T008 subset, Iteration D2B): production-mode `app` + PostgreSQL 17 `db`;
-# plus the profile-gated silent-listener (Iteration D2C1) and config-fault (Iteration D2C2)
-# scenarios, see the sections below.
+# plus the profile-gated silent-listener (Iteration D2C1), config-fault (Iteration D2C2),
+# auth-failure and cold-refused (Iteration D2C3) scenarios, see the sections below.
 # Standalone from the developer `compose.yaml`. Used only by tests/integration/health.test.mjs, which
 # runs it under a unique `-p` project name per run, generates ephemeral DB/user/password values and
 # passes them only through the child-process environment, then removes the project with
@@ -135,6 +135,104 @@ services:
     env_file: ${CONFIG_FAULT_ENV_FILE:-/dev/null}
     ports:
       - "127.0.0.1::3000"
+    restart: "no"
+    healthcheck:
+      # HTTP server liveness only (static page); independent of the database.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+
+  # --- Authentication failure (T010 connection-failure part, Iteration D2C3) ---------------------
+  # Profile-gated: the auth-failure suite starts only `db-auth` + `app-auth` with
+  # `--profile auth-failure` in its own project. `db-auth` is a real PostgreSQL 17 with the generated
+  # valid DB/user/password; `app-auth` uses the same DB/user but POSTGRES_WRONG_PASSWORD, a different
+  # generated value set only by that suite. The `:-` default keeps the other selections valid (the
+  # whole file is interpolated); the suite checks inside the container that the value is non-empty.
+
+  db-auth:
+    profiles: [auth-failure]
+    image: postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+    # No host port and no named volume (the image's anonymous data volume is removed by `down -v`).
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  app-auth:
+    profiles: [auth-failure]
+    # Same production Dockerfile/runtime stage as `app`; only the password differs.
+    build:
+      context: ..
+    environment:
+      POSTGRES_HOST: db-auth
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_WRONG_PASSWORD:-}
+    ports:
+      - "127.0.0.1::3000"
+    depends_on:
+      db-auth:
+        condition: service_healthy
+        restart: false
+    restart: "no"
+    healthcheck:
+      # HTTP server liveness only (static page); independent of the database.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+
+  # --- Cold refused connection (T010 connection-failure part, Iteration D2C3) --------------------
+  # Profile-gated: the cold-refused suite starts only `refused-target` + `app-refused` with
+  # `--profile cold-refused` in its own project. `refused-target` is resolvable by Compose DNS and
+  # stays running, but its process opens no socket at all, so TCP 5432 is refused.
+
+  refused-target:
+    profiles: [cold-refused]
+    # Same pinned Node 24 base image as the production Dockerfile; an idle process, no listener.
+    image: node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+    user: node
+    command: ["node", "-e", "setInterval(() => {}, 1 << 30)"]
+    # No ports published.
+    restart: "no"
+    stop_grace_period: 5s
+
+  app-refused:
+    profiles: [cold-refused]
+    # Same production Dockerfile/runtime stage as `app`; only the database destination differs.
+    build:
+      context: ..
+    environment:
+      POSTGRES_HOST: refused-target
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1::3000"
+    depends_on:
+      refused-target:
+        condition: service_started
+        restart: false
     restart: "no"
     healthcheck:
       # HTTP server liveness only (static page); independent of the database.
