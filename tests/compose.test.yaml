@@ -1,0 +1,59 @@
+# Isolated test fixture (T008 subset, Iteration D2B): production-mode `app` + PostgreSQL 17 `db`.
+# Standalone from the developer `compose.yaml`. Used only by tests/integration/health.test.mjs, which
+# runs it under a unique `-p` project name per run, generates ephemeral DB/user/password values and
+# passes them only through the child-process environment, then removes the project with
+# `down -v --remove-orphans --rmi local`. No `.env` file is consumed for these values.
+
+services:
+  app:
+    build:
+      # Repository root (this file lives in tests/); the production Dockerfile and runtime stage.
+      context: ..
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+    ports:
+      # Loopback only, dynamic host port; discovered with `docker compose port app 3000`.
+      - "127.0.0.1::3000"
+    depends_on:
+      db:
+        # Gates initial startup only; DB stop/start never restarts or recreates the app.
+        condition: service_healthy
+        restart: false
+    restart: "no"
+    healthcheck:
+      # Liveness of the HTTP server only (static page); deliberately independent of the database.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+
+  db:
+    image: postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD}
+    # No host port: the database is reachable only on the project-owned Compose network.
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    restart: "no"
+    healthcheck:
+      # TCP check on 127.0.0.1 so the init-time socket-only server is not reported ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  # Project-scoped (prefixed with the unique project name) and removed by `down -v`.
+  db-data:

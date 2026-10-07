@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   PROBE_BUDGET_MS,
@@ -20,8 +23,9 @@ import {
 } from "../helpers/health-assertions.mjs";
 
 // Focused, deterministic checks of the Iteration B probe through its code-level client injection
-// interface (T011) and self-tests of the shared HTTP assertions (T006). No Docker, PostgreSQL,
-// HTTP server or network is used; the real DB-stop sequence remains separate protection.
+// interface (T011) and self-tests of the shared HTTP assertions (T006) use no Docker, PostgreSQL,
+// HTTP server or network. The last suite (T008/T009 subset) runs the real 10 healthy -> 10
+// database-loss -> 10 recovery lifecycle against the production image and PostgreSQL 17.
 
 const VALID_ENV = Object.freeze({
   POSTGRES_HOST: "db.internal",
@@ -590,4 +594,289 @@ describe("health HTTP assertions (T006 self-tests)", () => {
     );
     await rejectsSanitized(measureRequest(async () => undefined, { watchdogMs: 1_000 }));
   });
+});
+
+// --- Real database loss / recovery lifecycle (T008/T009 main-sequence subset) ------------------
+//
+// One unique Compose project per run from tests/compose.test.yaml: the production app image and
+// PostgreSQL 17 (pinned digest), a project-owned network and volume, generated credentials passed
+// only through the child-process environment, the app on a dynamic loopback port and no host DB
+// port. Docker/Compose being unavailable is a failure, never a skip. Child-process output is never
+// echoed (it may carry environment values); failures report only a fixed label and exit status.
+
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const TEST_COMPOSE_FILE = fileURLToPath(new URL("../compose.test.yaml", import.meta.url));
+
+const BATCH_SIZE = 10;
+// Outer node:test bound; every step below has its own tighter bound so cleanup still runs.
+const LIFECYCLE_TIMEOUT_MS = 30 * 60_000;
+const COMPOSE_CHECK_TIMEOUT_MS = 30_000;
+const COMPOSE_UP_TIMEOUT_MS = 12 * 60_000; // image build + bounded --wait
+const COMPOSE_WAIT_TIMEOUT_S = 180;
+const COMPOSE_STEP_TIMEOUT_MS = 120_000;
+const COMPOSE_DOWN_TIMEOUT_MS = 180_000;
+const READINESS_LIMIT_MS = 120_000;
+const READINESS_POLL_MS = 500;
+
+/** Unique project name and fresh credentials; the values are never printed. */
+function createFixture() {
+  const suffix = randomBytes(6).toString("hex");
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    // Developer Compose selections must not leak into the owned project.
+    if (!key.startsWith("COMPOSE_") && !key.startsWith("POSTGRES_")) {
+      env[key] = value;
+    }
+  }
+  env.POSTGRES_DB = `poc_${randomBytes(6).toString("hex")}`;
+  env.POSTGRES_USER = `u_${randomBytes(6).toString("hex")}`;
+  env.POSTGRES_PASSWORD = randomBytes(24).toString("base64url");
+  return { project: `toolhunter-d2b-${suffix}`, env };
+}
+
+/** Runs `docker <args>`; a failure carries only `label` and the exit status, never output. */
+function docker(fixture, args, label, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "docker",
+      args,
+      {
+        cwd: REPO_ROOT,
+        env: fixture.env,
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+        maxBuffer: 64 * 1024 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout) => {
+        if (!error) {
+          resolve(String(stdout).trim());
+          return;
+        }
+        let reason;
+        if (error.code === "ENOENT") {
+          reason = "docker executable not found";
+        } else if (error.killed) {
+          reason = `timed out after ${timeoutMs} ms`;
+        } else if (typeof error.code === "number") {
+          reason = `exit code ${error.code}`;
+        } else {
+          reason = "could not be executed";
+        }
+        reject(new assert.AssertionError({ message: `${label} failed (${reason})` }));
+      },
+    );
+  });
+}
+
+function compose(fixture, args, label, timeoutMs = COMPOSE_STEP_TIMEOUT_MS) {
+  const projectArgs = ["compose", "-p", fixture.project, "-f", TEST_COMPOSE_FILE];
+  return docker(fixture, [...projectArgs, ...args], label, timeoutMs);
+}
+
+function parseJson(text, label) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    assert.fail(`${label}: unexpected output format`);
+  }
+}
+
+async function containerId(fixture, service) {
+  const id = await compose(fixture, ["ps", "--all", "-q", service], `locate ${service} container`);
+  if (!/^[0-9a-f]{12,64}$/.test(id)) {
+    assert.fail(`expected exactly one ${service} container in the owned project`);
+  }
+  return id;
+}
+
+/** Only the State object is read; the full inspect output would include the container env. */
+async function containerState(fixture, id, label) {
+  const state = parseJson(
+    await docker(fixture, ["inspect", "--format", "{{json .State}}", id], label, COMPOSE_STEP_TIMEOUT_MS),
+    label,
+  );
+  return { running: state?.Running === true, startedAt: String(state?.StartedAt ?? "") };
+}
+
+async function appHttpBaseUrl(fixture) {
+  const published = await compose(fixture, ["port", "app", "3000"], "discover app HTTP port");
+  const match = /^127\.0\.0\.1:(\d{1,5})$/.exec(published);
+  if (match === null) {
+    assert.fail("app HTTP port is not published on 127.0.0.1 with a single dynamic port");
+  }
+  return `http://127.0.0.1:${match[1]}`;
+}
+
+/** One real GET; the body is read inside the measured interval. */
+async function getHealth(baseUrl) {
+  const response = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(WATCHDOG_MS) });
+  const body = await response.text();
+  return { status: response.status, headers: response.headers, body };
+}
+
+async function timedHealthRequest(baseUrl) {
+  return measureRequest(() => getHealth(baseUrl));
+}
+
+/**
+ * Bounded readiness: polls until exact full health. Every intermediate answer must be the exact
+ * database-unavailable contract; transport failure or any other answer fails immediately.
+ */
+async function waitForFullHealth(baseUrl, label) {
+  const deadline = performance.now() + READINESS_LIMIT_MS;
+  for (let attempt = 1; ; attempt += 1) {
+    const { response, elapsedMs } = await withContext(`${label} attempt ${attempt}`, () =>
+      timedHealthRequest(baseUrl),
+    );
+    if (response.status === 200) {
+      await withContext(`${label} attempt ${attempt}`, () =>
+        assertHealthyResponse(response, { elapsedMs }),
+      );
+      return attempt;
+    }
+    await withContext(`${label} attempt ${attempt}`, () =>
+      assertUnavailableResponse(response, { elapsedMs }),
+    );
+    if (performance.now() >= deadline) {
+      assert.fail(`${label}: full health not reached within ${READINESS_LIMIT_MS} ms`);
+    }
+    await delay(READINESS_POLL_MS);
+  }
+}
+
+/** Exactly BATCH_SIZE sequential requests, each checked with the shared exact assertion. */
+async function runBatch(baseUrl, phase, assertResponse) {
+  let maxElapsedMs = 0;
+  for (let index = 0; index < BATCH_SIZE; index += 1) {
+    await withContext(`${phase} request ${index}`, async () => {
+      const { response, elapsedMs } = await timedHealthRequest(baseUrl);
+      await assertResponse(response, { elapsedMs });
+      maxElapsedMs = Math.max(maxElapsedMs, elapsedMs);
+    });
+  }
+  return maxElapsedMs;
+}
+
+/** Prefixes a sanitized assertion message with where it happened. */
+async function withContext(where, run) {
+  try {
+    return await run();
+  } catch (error) {
+    // Assertion messages from the shared helper and this file are already sanitized; anything
+    // else is replaced by a fixed message so no raw transport/driver detail is printed.
+    const detail = error instanceof assert.AssertionError ? error.message : "unexpected failure";
+    throw new assert.AssertionError({ message: `${where}: ${detail}` });
+  }
+}
+
+async function assertSameRunningApp(fixture, identity, when) {
+  const id = await containerId(fixture, "app");
+  assert.equal(id, identity.id, `${when}: app container was replaced`);
+  const state = await containerState(fixture, id, "inspect app container");
+  assert.equal(state.running, true, `${when}: app container is not running`);
+  assert.equal(state.startedAt, identity.startedAt, `${when}: app container was restarted`);
+}
+
+describe("real database loss and recovery (production image + PostgreSQL 17)", () => {
+  test(
+    "10 healthy -> stop db -> 10 database-loss -> start db -> 10 recovery, same app process",
+    { timeout: LIFECYCLE_TIMEOUT_MS },
+    async (t) => {
+      const fixture = createFixture();
+      let owned = false;
+      let primaryError;
+
+      try {
+        // Missing Docker or Compose is a hard failure, never a skip.
+        await docker(
+          fixture,
+          ["compose", "version"],
+          "Docker/Compose availability check (required; this test never skips)",
+          COMPOSE_CHECK_TIMEOUT_MS,
+        );
+
+        owned = true;
+        await compose(
+          fixture,
+          ["up", "-d", "--build", "--wait", "--wait-timeout", String(COMPOSE_WAIT_TIMEOUT_S)],
+          "bounded fixture startup",
+          COMPOSE_UP_TIMEOUT_MS,
+        );
+
+        const dbId = await containerId(fixture, "db");
+        const dbPorts = await docker(
+          fixture,
+          ["inspect", "--format", "{{json .HostConfig.PortBindings}}", dbId],
+          "inspect db port bindings",
+          COMPOSE_STEP_TIMEOUT_MS,
+        );
+        const bindings = parseJson(dbPorts, "inspect db port bindings");
+        assert.ok(
+          bindings === null || Object.keys(bindings).length === 0,
+          "db must not publish any host port",
+        );
+
+        const baseUrl = await appHttpBaseUrl(fixture);
+        const startupAttempts = await waitForFullHealth(baseUrl, "startup readiness");
+        t.diagnostic(`startup readiness reached after ${startupAttempts} request(s)`);
+
+        const appId = await containerId(fixture, "app");
+        const appState = await containerState(fixture, appId, "inspect app container");
+        assert.equal(appState.running, true, "app container is not running after startup");
+        assert.ok(appState.startedAt.length > 0, "app container StartedAt is missing");
+        const identity = { id: appId, startedAt: appState.startedAt };
+
+        const healthyMax = await runBatch(baseUrl, "healthy", assertHealthyResponse);
+        t.diagnostic(`healthy: ${BATCH_SIZE}/${BATCH_SIZE} exact HTTP 200 (max ${Math.round(healthyMax)} ms)`);
+
+        await compose(fixture, ["stop", "db"], "stop db");
+        const dbStopped = await containerState(fixture, dbId, "inspect db container");
+        assert.equal(dbStopped.running, false, "db container is still running after stop");
+        await assertSameRunningApp(fixture, identity, "after db stop");
+
+        // A full-health answer while db is stopped fails here (exact 503 contract only).
+        const lossMax = await runBatch(baseUrl, "database-loss", assertUnavailableResponse);
+        t.diagnostic(`database-loss: ${BATCH_SIZE}/${BATCH_SIZE} exact HTTP 503 (max ${Math.round(lossMax)} ms)`);
+        await assertSameRunningApp(fixture, identity, "after database-loss batch");
+        const dbStillStopped = await containerState(fixture, dbId, "inspect db container");
+        assert.equal(dbStillStopped.running, false, "db container restarted during database-loss batch");
+
+        await compose(fixture, ["start", "db"], "start db");
+        const recoveryAttempts = await waitForFullHealth(baseUrl, "recovery readiness");
+        t.diagnostic(`recovery readiness reached after ${recoveryAttempts} request(s)`);
+        await assertSameRunningApp(fixture, identity, "after db start");
+
+        const recoveryMax = await runBatch(baseUrl, "database-recovery", assertHealthyResponse);
+        t.diagnostic(
+          `database-recovery: ${BATCH_SIZE}/${BATCH_SIZE} exact HTTP 200 (max ${Math.round(recoveryMax)} ms)`,
+        );
+        await assertSameRunningApp(fixture, identity, "after database-recovery batch");
+      } catch (error) {
+        primaryError = error;
+      }
+
+      // Always runs, on success and on every failure path: removes only this run's containers,
+      // network, volume and locally built image.
+      if (owned) {
+        try {
+          await compose(
+            fixture,
+            ["down", "-v", "--remove-orphans", "--rmi", "local", "--timeout", "5"],
+            "owned fixture cleanup",
+            COMPOSE_DOWN_TIMEOUT_MS,
+          );
+        } catch (cleanupError) {
+          if (primaryError === undefined) {
+            primaryError = cleanupError;
+          } else {
+            t.diagnostic("owned fixture cleanup also failed");
+          }
+        }
+      }
+      if (primaryError !== undefined) {
+        throw primaryError;
+      }
+    },
+  );
 });
