@@ -1,19 +1,3 @@
-<!--
-Sync Impact Report — temporary human-review material; remove before committing.
-Version change: unratified scaffold → 1.0.0 (initial adoption).
-Modified principles: scaffold placeholders replaced by eight initial principles:
-I. SPEC BEFORE CODE; II. PATCH THE CANONICAL REPOSITORY;
-III. DETERMINISTIC EVIDENCE OVER AGENT CLAIMS;
-IV. TESTS MUST BE EXECUTABLE OUTSIDE THE LLM; V. NO SILENT SCOPE EXPANSION;
-VI. HUMAN PROMOTION GATE; VII. SECRETS MUST NEVER ENTER GIT;
-VIII. NO CUSTOM ORCHESTRATION IN PLATFORM-POC-001.
-Added sections: Project Scope and Constraints; Development Workflow and Review Gates;
-concrete Governance rules.
-Removed sections: none; placeholder content and examples replaced.
-Follow-up TODOs: none.
-Dependent templates and commands: unchanged; compliance is checked at runtime.
--->
-
 # Tool Hunter Constitution
 
 ## Core Principles
