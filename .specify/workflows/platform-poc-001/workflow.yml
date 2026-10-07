@@ -2,15 +2,15 @@ schema_version: "1.0"
 workflow:
   id: "platform-poc-001"
   name: "PLATFORM-POC-001 remainder (after HUMAN GATE #1)"
-  version: "1.0.0"
+  version: "1.1.0"
   author: "sanches16"
   description: >-
     Plan → tasks → analyze → implement → deterministic verification → CI →
     converge → optional critic for specs/001-foundation-health, starting from
-    the approved HUMAN GATE #1 state. Human gates are mandatory, at most one
-    repair cycle, no merge.
-  # Roles: architect/reviewer = codex, implementer = claude,
-  # critic = grok (read-only shell step), verifier = shell + GitHub Actions.
+    the approved HUMAN GATE #1 state. Human gates are mandatory and recorded in
+    Git before the run continues or stops, at most one repair cycle, no merge.
+  # Roles: architect/reviewer = codex, implementer = claude (file edits only),
+  # critic = grok (read-only shell step), verifier = trusted shell steps + GitHub Actions.
   integration: "codex"
 
 requires:
@@ -20,12 +20,26 @@ requires:
       - "codex"
       - "claude"
 
+# Conventions
+# - Every gate uses on_reject: skip so the choice always reaches the next step:
+#   <gate> → <gate>-record (commit + push the decision) → <gate>-enforce
+#   (continue, or exit non-zero to stop). A stopped run cannot be resumed past
+#   the enforce step because it fails again for the same recorded choice.
+# - guard-* steps run after every Codex/Claude step. They are inline (not
+#   scripts an agent could edit) and stop the run before any commit/push if
+#   .specify/workflows/platform-poc-001/ differs from the tree recorded at start.
+
 steps:
   # ── Entry guard ───────────────────────────────────────────────────────
   - id: preflight
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/preflight.sh"'
     timeout: 120
+
+  - id: workflow-baseline
+    type: shell
+    output_format: json
+    run: 'd=.specify/workflows/platform-poc-001; [ -z "$(git status --porcelain --untracked-files=all --ignored -- "$d")" ] || { echo "workflow dir not clean" >&2; exit 1; }; printf "{\"tree\": \"%s\"}" "$(git rev-parse "HEAD:$d")"'
 
   # ── Architect: plan ───────────────────────────────────────────────────
   - id: plan
@@ -35,8 +49,13 @@ steps:
       args: >-
         Feature directory: specs/001-foundation-health. Plan PLATFORM-POC-001 from the
         approved spec.md and constitution only (HUMAN GATE #1). Do not modify spec.md,
-        the constitution or the requirements checklist. Respect docs/poc/PLATFORM-POC-001.md
-        scope and exclusions. Do not write application code.
+        the constitution, the requirements checklist or anything under
+        .specify/workflows/. Respect docs/poc/PLATFORM-POC-001.md scope and exclusions.
+        Do not write application code.
+
+  - id: guard-plan
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
   - id: plan-save-report
     type: shell
@@ -51,14 +70,18 @@ steps:
     message: >-
       HUMAN GATE #2A: review specs/001-foundation-health/plan.md and its supporting
       artifacts (research.md, data-model.md, contracts/, quickstart.md) before tasks
-      are generated.
+      are generated. Both choices are recorded in Git; reject stops the run.
     show_file: specs/001-foundation-health/plan.md
     options: [approve, reject]
-    on_reject: abort
+    on_reject: skip
 
   - id: gate-2a-record
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2A "HUMAN GATE 2A plan review" "{{ steps.gate-2a.output.choice }}" "{{ context.run_id }}"'
+
+  - id: gate-2a-enforce
+    type: shell
+    run: 'c="{{ steps.gate-2a.output.choice }}"; if [ "$c" = "approve" ]; then echo "PASS: GATE 2A approved"; else echo "STOP: GATE 2A decision \"$c\" recorded in Git; run stopped" >&2; exit 1; fi'
 
   # ── Architect: tasks + analyze ────────────────────────────────────────
   - id: tasks
@@ -69,7 +92,12 @@ steps:
         Feature directory: specs/001-foundation-health. Generate tasks from the
         approved plan (HUMAN GATE #2A). Every task must trace to a requirement or
         acceptance criterion; include lint, typecheck, test, build, Docker Compose
-        and GitHub Actions tasks. No out-of-scope work.
+        and GitHub Actions tasks. No out-of-scope work. Do not modify anything under
+        .specify/workflows/.
+
+  - id: guard-tasks
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
   - id: tasks-validate
     type: shell
@@ -81,6 +109,10 @@ steps:
     input:
       args: "Feature directory: specs/001-foundation-health. Read-only cross-artifact analysis."
 
+  - id: guard-analyze
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
+
   - id: analyze-save-report
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/save-codex-report.sh" ANALYZE "{{ context.run_id }}"'
@@ -89,39 +121,65 @@ steps:
     type: gate
     message: >-
       HUMAN GATE #2B: review specs/001-foundation-health/tasks.md and
-      reviews/ANALYZE.md. Approve authorizes Claude to implement exactly these tasks.
+      reviews/ANALYZE.md. approve authorizes Claude to implement exactly these tasks.
+      Both choices are recorded in Git; reject stops the run.
     show_file: specs/001-foundation-health/reviews/ANALYZE.md
     options: [approve, reject]
-    on_reject: abort
+    on_reject: skip
 
   - id: gate-2b-record
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_2B "HUMAN GATE 2B tasks and analyze review" "{{ steps.gate-2b.output.choice }}" "{{ context.run_id }}"'
 
-  # ── Implementer ───────────────────────────────────────────────────────
+  - id: gate-2b-enforce
+    type: shell
+    run: 'c="{{ steps.gate-2b.output.choice }}"; if [ "$c" = "approve" ]; then echo "PASS: GATE 2B approved"; else echo "STOP: GATE 2B decision \"$c\" recorded in Git; run stopped" >&2; exit 1; fi'
+
+  # ── Implementer (file edits only; all commands run in trusted shell steps) ──
+  - id: implement-context
+    type: shell
+    run: '.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks'
+
   - id: implement
     command: speckit.implement
     integration: claude
     input:
       args: >-
-        Feature directory: specs/001-foundation-health. Implement only the tasks in
-        tasks.md approved at HUMAN GATE #2B, using repository artifacts as the only
-        context. Do not modify spec.md, plan.md or the constitution. No catalog, Avito,
-        auth, backup, orchestration or other out-of-scope work. Run the relevant local
-        checks. Write specs/001-foundation-health/reviews/IMPLEMENTATION_REPORT.md
-        listing completed task ids, checks run with results, and every deviation.
-        Do not commit. Stop after implementation.
+        Feature directory: specs/001-foundation-health. The trusted workflow already ran
+        the prerequisite script; use this output instead of running it:
+        {{ steps.implement-context.output.stdout }}
+        Implement only the tasks in tasks.md approved at HUMAN GATE #2B, using repository
+        artifacts as the only context. You can read and edit files only: do not run npm,
+        npx, node, docker or any other command; the workflow runs install, lint,
+        typecheck, test, build and Docker checks after you stop. Do not modify spec.md,
+        plan.md, the constitution or anything under .specify/workflows/. No catalog, Avito,
+        auth, backup, orchestration or other out-of-scope work. Write
+        specs/001-foundation-health/reviews/IMPLEMENTATION_REPORT.md listing completed
+        task ids, what the workflow should verify, and every deviation. Do not commit.
+        Stop after implementation.
 
-  # ── Deterministic verification ────────────────────────────────────────
+  - id: guard-implement
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
+
+  # ── Deterministic verification (trusted shell) ────────────────────────
   - id: local-checks
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh"'
     timeout: 1800
 
+  - id: guard-local-checks
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
+
   - id: docker-health
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh"'
     timeout: 1200
+
+  - id: guard-docker-health
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
   - id: implement-commit
     type: shell
@@ -142,6 +200,11 @@ steps:
         implementation with the constitution, spec.md, plan.md, tasks.md and
         acceptance criteria (not the implementer's summary). Append traceable tasks
         only for real gaps. List each gap with requirement id and file evidence.
+        Do not modify anything under .specify/workflows/.
+
+  - id: guard-converge
+    type: shell
+    run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
   - id: converge-save-report
     type: shell
@@ -157,11 +220,28 @@ steps:
       Convergence review (reviews/CONVERGE.md). accept = go to critic and final gate;
       repair = ONE Claude repair cycle for the appended tasks, then full re-verification
       and re-convergence (no further repairs without a new decision); abort = stop.
+      Every choice is recorded in Git first.
     show_file: specs/001-foundation-health/reviews/CONVERGE.md
     options: [accept, repair, abort]
-    on_reject: abort
+    on_reject: skip
+
+  - id: converge-review-record
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_CONVERGE "Convergence review gate" "{{ steps.converge-review.output.choice }}" "{{ context.run_id }}"'
+
+  - id: converge-review-enforce
+    type: shell
+    run: 'c="{{ steps.converge-review.output.choice }}"; if [ "$c" = "accept" ] || [ "$c" = "repair" ]; then echo "PASS: convergence decision $c"; else echo "STOP: convergence decision \"$c\" recorded in Git; run stopped" >&2; exit 1; fi'
 
   # ── Single bounded repair cycle (flat steps so resume never re-runs Claude) ──
+  - id: repair-context
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-context-run
+        type: shell
+        run: '.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks'
+
   - id: repair-implement
     type: if
     condition: "{{ steps.converge-review.output.choice == 'repair' }}"
@@ -171,10 +251,22 @@ steps:
         integration: claude
         input:
           args: >-
-            Feature directory: specs/001-foundation-health. Repair cycle 1 of 1: implement
-            only the open tasks appended by convergence (see reviews/CONVERGE.md). Same scope
-            rules as before. Append a "Repair cycle 1" section to
+            Feature directory: specs/001-foundation-health. The trusted workflow already ran
+            the prerequisite script; use this output instead of running it:
+            {{ steps.repair-context-run.output.stdout }}
+            Repair cycle 1 of 1: implement only the open tasks appended by convergence
+            (see reviews/CONVERGE.md). File edits only: do not run npm, npx, node, docker
+            or any other command. Same scope rules as before; do not modify anything under
+            .specify/workflows/. Append a "Repair cycle 1" section to
             reviews/IMPLEMENTATION_REPORT.md. Do not commit. Stop after the repair.
+
+  - id: guard-repair-implement
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: guard-repair-implement-run
+        type: shell
+        run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
   - id: repair-local-checks
     type: if
@@ -185,6 +277,14 @@ steps:
         run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/local-checks.sh"'
         timeout: 1800
 
+  - id: guard-repair-local-checks
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: guard-repair-local-checks-run
+        type: shell
+        run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
+
   - id: repair-docker-health
     type: if
     condition: "{{ steps.converge-review.output.choice == 'repair' }}"
@@ -193,6 +293,14 @@ steps:
         type: shell
         run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/docker-health.sh"'
         timeout: 1200
+
+  - id: guard-repair-docker-health
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: guard-repair-docker-health-run
+        type: shell
+        run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
   - id: repair-commit
     type: if
@@ -222,7 +330,15 @@ steps:
           args: >-
             Feature directory: specs/001-foundation-health. Re-converge after repair
             cycle 1 against the same artifacts. Report remaining gaps; do not start
-            another repair.
+            another repair. Do not modify anything under .specify/workflows/.
+
+  - id: guard-repair-converge
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: guard-repair-converge-run
+        type: shell
+        run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
   - id: repair-converge-save
     type: if
@@ -259,9 +375,14 @@ steps:
       (git diff 288cdc7..HEAD), CI result, reviews/CONVERGE*.md, reviews/GROK_CRITIC.md
       (if present) and reviews/IMPLEMENTATION_REPORT.md. approve = merge allowed, done
       manually by a human via PR; request-changes = stop for a new decision; abort = stop.
+      Every choice is recorded in Git first.
     options: [approve, request-changes, abort]
-    on_reject: abort
+    on_reject: skip
 
   - id: final-gate-record
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-gate.sh" HUMAN_GATE_FINAL "FINAL HUMAN GATE" "{{ steps.final-gate.output.choice }}" "{{ context.run_id }}"'
+
+  - id: final-gate-enforce
+    type: shell
+    run: 'c="{{ steps.final-gate.output.choice }}"; if [ "$c" = "approve" ]; then echo "PASS: FINAL GATE approved; merge only manually via PR"; else echo "STOP: final decision \"$c\" recorded in Git; no merge" >&2; exit 1; fi'

@@ -39,7 +39,11 @@ for var in SPECKIT_INTEGRATION_CODEX_EXTRA_ARGS SPECKIT_INTEGRATION_CLAUDE_EXTRA
     fail "$var contains a permission-bypass flag"
   fi
 done
-pass "agent flags loaded, no permission-bypass flags"
+claude_flags="$(printenv SPECKIT_INTEGRATION_CLAUDE_EXTRA_ARGS)"
+if printf '%s' "$claude_flags" | grep -qE 'Bash\((npm|npx|node|docker)'; then
+  fail "Claude flags allow npm/npx/node/docker; the implementer must be file-edit only"
+fi
+pass "agent flags loaded, no permission-bypass flags, Claude limited to file edits + read-only git"
 
 for cmd in codex claude docker gh jq npm; do command -v "$cmd" >/dev/null || fail "$cmd not found"; done
 docker info >/dev/null 2>&1 || fail "Docker engine not running"

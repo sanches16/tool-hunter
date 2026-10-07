@@ -19,6 +19,11 @@ if [ -z "$(git diff --cached --name-only)" ]; then
   exit 0
 fi
 
+# Never commit changes to the workflow or its deterministic verifier.
+if git diff --cached --name-only | grep -E '^\.specify/workflows/platform-poc-001/'; then
+  git reset -q
+  fail "workflow/verifier files changed (above); unstaged, nothing committed"
+fi
 if git diff --cached --name-only | grep -E '(^|/)node_modules/|(^|/)\.next/'; then
   fail "build output or dependencies staged (add them to .gitignore)"
 fi
