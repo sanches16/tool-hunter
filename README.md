@@ -10,9 +10,10 @@ commands. Exact interfaces live in
 and [`specs/001-foundation-health/quickstart.md`](specs/001-foundation-health/quickstart.md).
 Everything below works from a fresh checkout without source edits or prior chat context.
 
-> **Current status:** the application, Dockerfile and Compose stack are implemented. The Docker-based
-> integration suite and `scripts/verify-startup.mjs` are **not implemented yet** — see
-> [Verification commands](#verification-commands). CI is not configured yet.
+> **Current status:** the application, Dockerfile and Compose stack, the real Docker/Compose
+> integration suite (`npm test`), the isolated startup verifier (`npm run verify:startup`) and
+> GitHub Actions CI are implemented — see [Verification commands](#verification-commands). This is
+> work in progress on the PoC branch; it does not by itself constitute final PoC acceptance.
 
 ## Prerequisites
 
@@ -222,18 +223,28 @@ npm run verify:startup
 | `npm run lint` | ESLint over the repository. |
 | `npm run typecheck` | `next typegen` then `tsc --noEmit` (strict); works on a fresh checkout without a prior build. |
 | `npm run build` | Production Next.js build; needs no database configuration or connection. |
-| `npm test` | Runs `tests/integration/health.test.mjs`: **focused code-level checks only** — configuration validation, the database probe through an injected test client (deadline, wrong results, failures, client cleanup, no escaped errors) and self-tests of the shared HTTP response assertions. It uses no Docker, PostgreSQL, HTTP server or network. |
-| `npm run verify:startup` | Runs `scripts/verify-startup.mjs`, which **does not exist yet**, so this command currently **fails**. |
+| `npm test` | Runs `tests/integration/health.test.mjs`: focused code-level checks (configuration validation, the database probe through an injected test client, self-tests of the shared HTTP response assertions) **and** real Docker/Compose scenarios with the production image in isolated Compose projects (see below). Requires Docker and Compose; takes a few minutes. |
+| `npm run verify:startup` | Runs `scripts/verify-startup.mjs`: an independent, isolated startup proof of the production image with PostgreSQL 17 (see below). Requires Docker and Compose. |
 
-Not implemented yet (planned in `specs/001-foundation-health/tasks.md`):
+### Implemented verification coverage
 
-- the Docker-based integration suite against real PostgreSQL in isolated Compose projects — ten
-  healthy, ten after DB stop and ten after DB recovery with unchanged app identity, plus the fault
-  matrix (cold unreachable DB, invalid credentials, missing/invalid configuration, silent TCP
-  listener) with ≤5 s timing on every request;
-- `scripts/verify-startup.mjs` (isolated startup, exact healthy check and cleanup);
-- CI running `npm ci` and the five commands above.
+`npm test` real Docker/Compose scenarios (from `tests/compose.test.yaml`), each in its own isolated
+Compose project with ≤5 s timing on every request:
 
-Until those land, `npm run verify:startup` will fail and `npm test` does not by itself prove the
-runtime behavior; the manual checks above are supplementary, not completion evidence. All five
-commands must exit zero before the runtime criteria can be considered verified.
+- database loss and recovery: 10 healthy → 10 after DB stop (database unavailable) → 10 after DB
+  recovery, with unchanged app identity;
+- silent PostgreSQL listener: requests stay bounded and sockets are cleaned up;
+- missing, empty and invalid runtime configuration;
+- authentication failure (invalid credentials);
+- cold-refused database target.
+
+`npm run verify:startup` uses a unique Compose project with generated credentials, gives the
+database no host port, publishes the app only on `127.0.0.1` with a dynamic port, performs one exact
+healthy check (HTTP 200, `Cache-Control: no-store`, ok/ok/ok body, ≤5,000 ms) and always cleans up
+its project.
+
+CI (`.github/workflows/ci.yml`) runs on `push` and `pull_request` with read-only permissions:
+`npm ci`, then the five commands above.
+
+The manual checks above are supplementary, not completion evidence. All five commands must exit
+zero before the runtime criteria can be considered verified.
