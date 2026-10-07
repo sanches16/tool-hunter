@@ -1,7 +1,7 @@
 # MAC SETUP RESULT
 
 **Runbook:** v1.1  
-**Status:** IN_PROGRESS
+**Status:** READY_FOR_PLATFORM_POC
 
 | Phase | Name | Status | Notes |
 |---:|---|---|---|
@@ -20,8 +20,8 @@
 | 12 | Spec Kit integrations | PASS | specify init --here --integration codex --script sh (answered 'y' to non-empty-dir merge prompt caused by .git + docs/; no --force; report verified unchanged); integration install claude, grok (no --force needed, multi_install_safe=true); use claude→grok→codex all OK; final default codex; 0 findings |
 | 13 | PoC spec import | PASS | docs/poc/PLATFORM-POC-001.md copied unchanged (sha256 151778…1610 = package); identity/Next.js//api/health checks OK |
 | 14 | Toolchain baseline / pre-final checks | PASS | CODEX_FINAL_OK, CLAUDE_FINAL_OK, GROK_FINAL_OK; CORE_SETUP_CHECKS_PASS; NO_OBVIOUS_SECRET_PATTERN; agent dirs contain only Spec Kit SKILL.md files; minimal root .gitignore added (.env, .env.*, !.env.example, .claude/settings.local.json, .DS_Store) |
-| 15 | Initial commit | NOT_STARTED | |
-| 16 | Private GitHub remote + push | NOT_STARTED | |
+| 15 | Initial commit | PASS | bbdf06c "chore: bootstrap multi-agent SDD platform" (55 files); no sensitive files staged; working tree clean. Note: `git diff --cached --check` flagged only Markdown hard-break trailing spaces + a blank line at EOF inside the supplied docs, left unchanged on purpose (runbook: do not rewrite PoC spec) |
+| 16 | Private GitHub remote + push | PASS | gh repo create tool-hunter --private --source=. --remote=origin --push; isPrivate=true; default branch main; local main tracks origin/main (remote uses SSH, gh git_protocol=ssh) |
 
 ## Versions
 - Git: 2.56.0 (Homebrew)
@@ -58,8 +58,8 @@
 - owner: sanches16
 - local repo: /Users/sanches16/Projects/tool-hunter (branch main)
 - remote repo: sanches16/tool-hunter (name available at Phase 6)
-- private:
-- push:
+- private: true
+- push: OK — https://github.com/sanches16/tool-hunter (main tracks origin/main)
 
 ## Security observations
 - OPENAI_API_KEY present: NOT_SET
@@ -68,7 +68,9 @@
 - obvious secret pattern found in report/repo: NO (NO_OBVIOUS_SECRET_PATTERN); no .env/*.pem/*.key/auth.json in repo
 
 ## Final verdict
-IN_PROGRESS
+READY_FOR_PLATFORM_POC
+
+Grok Build: PASS
 
 Allowed final values:
 - READY_FOR_PLATFORM_POC
