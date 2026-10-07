@@ -1,0 +1,11 @@
+# Local env files and credentials never enter the build context (only the safe example may).
+.env*
+!.env.example
+
+# VCS, dependencies, build output and agent scratch output
+.git
+node_modules
+.next
+.agent-out
+*.tsbuildinfo
+.DS_Store

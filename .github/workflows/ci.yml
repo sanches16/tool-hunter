@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (lint, typecheck, build, test, verify:startup)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Require Docker and Docker Compose
+        id: prereq
+        run: |
+          docker version --format '{{.Server.Version}}'
+          docker compose version --short
+
+      - name: npm ci
+        id: install
+        if: ${{ !cancelled() }}
+        run: npm ci
+
+      - name: npm run lint
+        id: lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - name: npm run typecheck
+        id: typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - name: npm run build
+        id: build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
+
+      - name: npm test
+        id: test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prereq.outcome == 'success' }}
+        run: npm test
+
+      - name: npm run verify:startup
+        id: verify_startup
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prereq.outcome == 'success' }}
+        run: npm run verify:startup
+
+      - name: Sanitized CI summary
+        if: ${{ always() }}
+        env:
+          TESTED_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          OUT_PREREQ: ${{ steps.prereq.outcome }}
+          OUT_INSTALL: ${{ steps.install.outcome }}
+          OUT_LINT: ${{ steps.lint.outcome }}
+          OUT_TYPECHECK: ${{ steps.typecheck.outcome }}
+          OUT_BUILD: ${{ steps.build.outcome }}
+          OUT_TEST: ${{ steps.test.outcome }}
+          OUT_VERIFY_STARTUP: ${{ steps.verify_startup.outcome }}
+        run: |
+          {
+            printf '## CI verification summary\n\n'
+            printf -- '- Tested commit: `%s`\n' "$TESTED_SHA"
+            printf -- '- Event: `%s`\n' "$EVENT_NAME"
+            printf -- '- Run: %s\n\n' "$RUN_URL"
+            printf '| Step | Outcome |\n|---|---|\n'
+            printf '| Docker + Compose prerequisite | %s |\n' "${OUT_PREREQ:-not run}"
+            printf '| npm ci | %s |\n' "${OUT_INSTALL:-not run}"
+            printf '| npm run lint | %s |\n' "${OUT_LINT:-not run}"
+            printf '| npm run typecheck | %s |\n' "${OUT_TYPECHECK:-not run}"
+            printf '| npm run build | %s |\n' "${OUT_BUILD:-not run}"
+            printf '| npm test | %s |\n' "${OUT_TEST:-not run}"
+            printf '| npm run verify:startup | %s |\n' "${OUT_VERIFY_STARTUP:-not run}"
+          } >> "$GITHUB_STEP_SUMMARY"
