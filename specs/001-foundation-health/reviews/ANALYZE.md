@@ -1,78 +1,87 @@
 # ANALYZE
 
-Source: Codex final message, workflow run 7eb19156, base commit d3892ff
+Source: Codex final message, workflow run f081ca83, base commit d2bf8d7
 
 ## Specification Analysis Report
 
-**Result: 2 MEDIUM findings; no HIGH or CRITICAL issues.** All 22 requirements and success criteria have task coverage. No files were changed.
+**Result: all six platform PoC checks PASS. No actionable cross-artifact findings.** Analysis was read-only; no files were changed.
 
-Analyzed `specs/001-foundation-health`. Prerequisites passed. Approved spec, constitution, plan, and supporting design blobs match HUMAN GATE #2A. All 33 tasks remain open; `tasks.md` is currently untracked.
+Reviewed `spec.md`, `plan.md`, `tasks.md`, constitution v1.0.0, supporting contracts/design documents, and human gate records. The prerequisite check resolved the requested feature directory successfully.
+
+### Required platform PoC checks
+
+Evidence below refers to [tasks.md](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md).
+
+| # | Check | Result | File:line evidence |
+|---|---|---|---|
+| 1 | Every buildable FR/SC has checkbox implementation coverage | **PASS** | `tasks.md:L30–81`: T001–T021 cover application/configuration, health behavior, tests, containers, documentation, CI and result-record structure. Requirement mapping appears below. |
+| 2 | Process-only and human obligations have stage, owner and evidence | **PASS** | `tasks.md:L87–105`: correctly titled non-checkbox traceability matrix covers local checks, Docker verification, commits, CI observation, convergence, optional critique, human gates, ratings and final records. |
+| 3 | No unchecked implementation task requires forbidden role actions | **PASS** | `tasks.md:L24`, `L30–81`: all 21 checkboxes describe repository file edits. Command execution and evidence collection belong to workflow owners at `L94–105`. |
+| 4 | Human decisions, approvals and ratings are not delegated to agents | **PASS** | `tasks.md:L81`: implementer creates placeholders only. `L93`, `L103–104`: approval, repair/promotion decisions and ratings belong to Human. |
+| 5 | I1: exclusive manifest ownership and shell-generated lockfile | **PASS** | `tasks.md:L24`, `L30–32`: T001 alone owns `package.json`; T002 owns TypeScript configuration/declarations; T003 owns ESLint configuration. `L94`: shell generates `package-lock.json`; no checkbox requests its creation. |
+| 6 | A1: deterministic T010 cleanup parameters preserve HTTP contract | **PASS** | `tasks.md:L53`: exactly 5 repetitions, ≤1000 ms post-response grace, fixture-owned ACTIVE sockets, pre-request baseline restored after each response and after all repetitions, HTTP deadline ≤5000 ms. `L59` preserves exact HTTP 200/503 bodies; `L96` repeats the verification parameters. |
+
+### Findings
 
 | ID | Category | Severity | Location(s) | Summary | Recommendation |
 |---|---|---|---|---|---|
-| I1 | Inconsistency | MEDIUM | [tasks.md:29](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:29), lines 30–33, 165 | T002/T003 describe preparing or ensuring `package.json` commands, while dependency notes restrict them to their own configuration files and prohibit concurrent package edits. Script ownership is unclear if T001 needs adjustment. | Assign complete script definitions to T001; make T002/T003 validate them and explicitly serialize any package corrections. |
-| A1 | Ambiguity | MEDIUM | [tasks.md:55](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/tasks.md:55); [runtime.md:69](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/contracts/runtime.md:69); [plan.md:149](/Users/sanches16/Projects/tool-hunter/specs/001-foundation-health/plan.md:149) | Cleanup verification requires “bounded transport release grace” and “no sustained socket growth,” but specifies neither a grace duration nor repetition count/socket threshold. Implementers could choose materially different pass conditions. | Define a numeric cleanup grace, timeout repetition count, and allowed socket count relative to baseline—or explicitly assign their selection and documentation before T010. |
+| — | — | — | — | No actionable duplication, ambiguity, underspecification, coverage gap, inconsistency or constitution conflict identified. | No remediation required. |
 
-**Coverage Summary Table**
+Historical draft/pending labels are explicitly preserved and explained by `tasks.md:L9–11`; they do not contradict the recorded planning approval.
 
-Coverage means associated work exists, not that verification has passed. Principal tasks are shown; T032 additionally reconciles every FR/SC.
+### Coverage summary
 
-| Requirement Key | Has Task? | Task IDs | Notes |
+“Workflow” identifies execution or human obligations rather than an additional implementation checkbox. Task coverage establishes planned work, not completed verification.
+
+| Requirement | Has implementation task? | Task IDs | Notes |
 |---|---|---|---|
-| FR-001 | Yes | T001, T005, T016–T021 | Local lifecycle |
-| FR-002 | Yes | T008–T014 | Fresh SQL operation |
-| FR-003 | Yes | T006, T009, T014 | Healthy contract |
-| FR-004 | Yes | T007–T014, T017 | Failure and recovery |
-| FR-005 | Yes | T006–T014 | Five-second bound |
-| FR-006 | Yes | T008, T010, T012, T017–T020 | Configuration |
-| FR-007 | Yes | T004, T010, T012–T014, T016–T022, T031, T033 | Secrets and safe diagnostics |
-| FR-008 | Yes | T019–T020 | Fresh-checkout documentation |
-| FR-009 | Yes | T001–T003, T006–T011, T015, T021–T023 | Five verification categories |
-| FR-010 | Yes | T022, T024 | Push/PR CI evidence |
-| FR-011 | Yes | T025–T027, T033 | Task links and handoff |
-| FR-012 | Yes | T027–T029, T031 | Reviews; preimplementation gate is an explicit prerequisite |
-| FR-013 | Yes | T001, T026, T028–T030, T033 | Experiment measurements |
-| FR-014 | Yes | T025, T029, T031–T033 | Scope, tooling and stop conditions |
-| SC-001 | Yes | T016, T019–T020 | Fresh-checkout assessment |
-| SC-002 | Yes | T009, T013, T015 | 10/10/10 sequence |
-| SC-003 | Yes | T006–T010, T013, T015 | Timed acceptance runs |
-| SC-004 | Yes | T002–T003, T011, T021–T023 | Independent checks and negative control |
-| SC-005 | Yes | T022, T024 | Revision-linked CI |
-| SC-006 | Yes | T025–T027, T033 | Independent resume assessments |
-| SC-007 | Yes | T004, T020, T029, T031 | Secret/scope/promotion review |
-| SC-008 | Yes | T029–T030, T033 | Measurements and human acceptance |
+| FR-001 | Yes | T001, T005, T015–T016, T018–T019 | Foundation and lifecycle |
+| FR-002 | Yes | T008–T009, T011, T013–T014 | Fresh actual SQL observation |
+| FR-003 | Yes | T006, T009, T011, T013–T014 | Healthy response |
+| FR-004 | Yes | T006–T011, T013–T014, T016 | Unavailable response and recovery |
+| FR-005 | Yes | T006–T011, T013–T014 | Deadline and cleanup |
+| FR-006 | Yes | T008, T010, T012, T014, T016–T018 | Environment configuration |
+| FR-007 | Yes | T004, T006, T008, T010, T012–T020 | Secret-safe implementation; commit review is workflow-owned |
+| FR-008 | Yes | T018 | Fresh-checkout documentation |
+| FR-009 | Yes | T001–T003, T005–T011, T019–T020 | Independent verification infrastructure |
+| FR-010 | Yes | T020 | CI file; actual observation is workflow-owned |
+| FR-011 | Yes | T021 | Record structure; retention, task links and handoff are workflow-owned |
+| FR-012 | Process-only | — | Gates, convergence, critique and repair control: `L93`, `L101–103` |
+| FR-013 | Yes | T021 | Measurement fields; actual measurements/ratings: `L102`, `L104` |
+| FR-014 | Constraint/process | T001, T005, T020–T021 | Tooling/scope constraints plus workflow promotion/stop control |
+| SC-001 | Yes | T015, T018 | Fresh-checkout execution: `L97` |
+| SC-002 | Yes | T006, T008–T009, T013 | Actual 10/10/10 run: `L96` |
+| SC-003 | Yes | T006–T010, T013 | Timed acceptance runs: `L96` |
+| SC-004 | Yes | T001–T003, T006, T008–T011, T019–T020 | Execution: `L94–96` |
+| SC-005 | Yes | T020 | SHA-linked CI observation: `L100` |
+| SC-006 | Yes | T021 | Handoff and revision-linked decisions: `L93`, `L99`, `L101`, `L103` |
+| SC-007 | Review-only | — | Safety/scope/promotion review: `L98`, `L103` |
+| SC-008 | Yes | T021 | Result structure; Human decision/ratings and final stop: `L103–105` |
 
-**Constitution Alignment**
+**Unmapped tasks:** None.
 
-No constitutional conflicts identified.
+### Constitution alignment
 
-| Rule | Analysis evidence |
-|---|---|
-| I. Spec before code | Tasks explicitly require remaining active-revision human review before implementation. |
-| II. Canonical repository | Plan preserves accepted artifacts; tasks require reviewable patches. |
-| III. Deterministic evidence | T015, T020, T023–T024 and T032 require revision-linked results; missing evidence keeps tasks open. |
-| IV. Checks outside the LLM | Plan/runtime contract define five independent commands and CI parity. |
-| V. Scope control | Spec exclusions are retained; T031 checks actual scope and dependencies. |
-| VI. Human promotion gate | T029 requires explicit human authorization and performs no merge. |
-| VII. Secrets | T004, T018, T025, T031 and T033 cover exclusions and precommit inspection. |
-| VIII. No custom orchestration | Plan explicitly checks prohibited tooling; T031 checks actual dependencies. |
-| Governance v1.0.0 | Spec and plan include compliance records and conflict-resolution requirements. |
+| Principle / Governance | Result | Evidence |
+|---|---|---|
+| I. Spec before code | PASS | `tasks.md:L9–11`, `L93`: renewed active-revision approval required |
+| II. Canonical repository | PASS | `tasks.md:L33`, `L81`, `L98–99`: preserve existing artifacts and use task-linked patches |
+| III. Deterministic evidence | PASS | `tasks.md:L89`, `L95–100`: missing/failing evidence prevents completion |
+| IV. Independent executable tests | PASS | `plan.md:L171–185`; `tasks.md:L95`, `L100` |
+| V. Bounded scope | PASS | `tasks.md:L85`, `L98`: explicit exclusions and diff/dependency review |
+| VI. Human promotion | PASS | `tasks.md:L103`, `L105`: specific Human authorization required |
+| VII. Secret exclusion | PASS | `tasks.md:L33`, `L67–79`, `L98`: ignore rules, safe output and pre-commit inspection |
+| VIII. No custom orchestration | PASS | `plan.md:L73`, `L129–132`; `tasks.md:L85`, `L98` |
+| Governance | PASS | `spec.md:L265–268`; `plan.md:L74`; `tasks.md:L150`: v1.0.0 remains binding |
 
-**Unmapped Tasks:** None.
+### Metrics and next action
 
-**Metrics**
+- Requirement identifiers reviewed: **22** — 14 FRs and 8 SCs.
+- Implementation tasks: **21**, all unchecked.
+- Buildable requirement coverage: **100%**.
+- Process/human obligation traceability: **100%**.
+- Findings, ambiguities, duplications and critical issues: **0** each.
 
-- Total requirements: **22** — 14 FRs and 8 SCs requiring implementation or evidence work
-- Total tasks: **33**
-- Coverage: **100%**
-- Ambiguity count: **1**
-- Duplication count: **0**
-- Critical issues: **0**
+The approved spec, constitution, plan and supporting design files match the HUMAN GATE #2A baseline. **Implementation remains gated:** the existing #2B record rejects the previous candidate. Obtain renewed HUMAN GATE #2B approval covering current tasks and this analysis, then commit the reviewed baseline before `$speckit-implement`.
 
-**Next Actions**
-
-The artifacts may proceed to human plan/task review. Clarify I1 and A1 before approving the implementation baseline. Implementation still requires the remaining HUMAN GATE #2 review and committed planning baseline; Gate #2A does not approve these tasks.
-
-Suggested follow-up: manually refine T001–T003 ownership and T010 cleanup assertions. If cleanup changes affect approved design, use `$speckit-plan` and obtain renewed review. Then rerun `$speckit-analyze`.
-
-Would you like me to suggest concrete remediation edits for these two issues?
+No remediation edits are needed.
