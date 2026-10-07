@@ -38,8 +38,9 @@ fi
 if git diff --cached --name-only | grep -E '(^|/)\.env$|(^|/)\.env\.[^e]|\.pem$|\.key$|(^|/)auth\.json$'; then
   fail "credential-like files staged (above)"
 fi
-if git diff --cached -U0 | grep -E '^\+' | grep -E 'sk-[A-Za-z0-9_-]{10,}|xai-[A-Za-z0-9_-]{10,}|gh[opsu]_[A-Za-z0-9]{20,}|Bearer [A-Za-z0-9._-]{20,}'; then
-  fail "possible secret in staged changes"
+if git diff --cached -U0 | grep -E '^\+' | has_secret; then
+  git reset -q
+  fail "possible secret in staged changes (above); unstaged, nothing committed"
 fi
 git diff --cached --check || echo "WARNING: whitespace issues in staged changes (not blocking)"
 

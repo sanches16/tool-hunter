@@ -13,6 +13,14 @@ APPROVED_BLOBS=(
   "$FEATURE_DIR/checklists/requirements.md=32d170a9eb2316f9630407b5833db8214b33a3de"
 )
 
+# Secret patterns (ERE). Each prefix needs a left token boundary so it cannot
+# start inside an ordinary word (e.g. "task-to-implementation"), and a payload
+# long enough for a real credential.
+SECRET_RE='(^|[^A-Za-z0-9_-])(sk-[A-Za-z0-9_-]{32,}|xai-[A-Za-z0-9_-]{32,}|gh[opsu]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16})([^A-Za-z0-9_-]|$)|(^|[^A-Za-z0-9_])Bearer [A-Za-z0-9._~+/-]{20,}'
+
+# Prints matching lines from stdin; exit 0 when a likely secret is present.
+has_secret() { grep -E "$SECRET_RE"; }
+
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
