@@ -44,7 +44,17 @@ Workflow stages available (step ids in
 - `docker-health` (shell): ephemeral-config production Compose lifecycle —
   startup, exact 200, DB stop → exact 503 ≤5 s, DB start → 200 with unchanged
   app container/process, app stop → no response, cleanup of own resources.
-- `implement-commit` (shell): diff/secret-checked commit + push of the tested tree.
+- `safety-review` (shell, after local/Docker checks, before implement-commit):
+  approved spec/plan/workflow artifacts unchanged; package.json limited to the
+  approved dependency set and no forbidden packages in package-lock.json;
+  changed paths free of excluded scope; `.dockerignore` excludes `.env*`,
+  `.git`, `node_modules`, `.next`, `.agent-out`; `.env.example` tracked; real
+  `.env*` files untracked and ignored; no credential/key material; sanitized
+  evidence recorded in RESULT. This is the producer for dependency, Docker
+  image/context exclusion, local env and scope reviews (SC-007).
+- `implement-commit` (shell): ONLY staged-content secret/credential guard,
+  commit, push, and clean-tree / origin verification. Do not attribute
+  dependency, image-exclusion, env or scope review to `implement-commit`.
 - `ci` (shell): observe GitHub Actions for that commit on BOTH paths — the
   `push` run and the `pull_request` run of an open (or workflow-created draft,
   verification-only) PR from `poc/platform-poc-001` into `main`.
@@ -103,13 +113,29 @@ that the workflow fills them.
 
 Request-level evidence (data-model): the integration tests (T009/T010) must,
 only when the environment variable `POC_TEST_EVIDENCE_PATH` is set, append one
-JSON object per timed health request to that file (JSON Lines) with exactly
-these keys: `phase` (string), `index` (integer), `http_status` (integer),
-`body` (the parsed exact three-field object, or null if none), `elapsed_ms`
-(monotonic number), optional `scenario` (string) and, for loss/recovery
-batches, `app_container_id` and `app_started_at` (strings). Values are short
-plain strings/numbers only: never connection strings, credentials, raw driver
-errors or stack traces. Without the variable, tests write nothing.
+JSON object per timed health request to that file (JSON Lines). Every object
+has exactly these keys (no others):
+
+- `phase`: non-empty string. The main 10/10/10 sequence uses exactly
+  `healthy`, `database-loss`, `database-recovery` (10 records each).
+- `index`: integer >= 0.
+- `http_status`: integer 200 or 503 (healthy and database-recovery = 200,
+  database-loss = 503).
+- `body`: required parsed object with exactly `status`, `application`,
+  `database`: 200 → `ok`/`ok`/`ok`; 503 → `degraded`/`ok`/`unavailable`.
+- `elapsed_ms`: monotonic number, 0 <= value <= 5000.
+- `scenario`: non-empty string.
+- `app_container_id`, `app_started_at`: non-empty strings identical across all
+  30 main-sequence records; for other fault scenarios the keys are present
+  with a string or null.
+
+Values are short plain strings/numbers only: never connection strings,
+credentials, raw driver errors or stack traces. Without the variable, tests
+write nothing. The workflow validates this with
+`checks/validate-observations.sh` (strict schema, self-tested in preflight).
+
+T015 `.dockerignore` must exclude `.env*` (allowing `!.env.example`), `.git`,
+`node_modules`, `.next` and `.agent-out`; `safety-review` checks these lines.
 
 ## 3. I1 — package.json ownership
 

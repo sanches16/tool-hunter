@@ -60,7 +60,26 @@ Report explicitly, each as PASS or FINDING with file:line evidence:
     (`record-evidence.sh results` copies it to `docs/poc/evidence/<sha>/`).
 15. CI evidence covers BOTH `push` and `pull_request` runs (`checks/ci.sh`),
     and `verification-enforce` requires both to succeed.
-16. RESULT receives all of these evidence paths (toolchain, local, request
+16. Grok participation is decided by structured critic evidence
+    (`checks/grok-critic.sh` keeps the exit code, writes `critic.json`, never
+    creates GROK_CRITIC.md on failure and removes a stale one;
+    `record-evidence.sh critic` maps success + report to participated,
+    otherwise not performed) — never by report presence or error text.
+17. The request JSONL schema is strict as stated in tasks-rules.md
+    (`checks/validate-observations.sh`): exact keys, required body with exact
+    200/503 contract, integer index/status, 0..5000 ms, non-empty
+    phase/scenario, identity rules; exactly 10/10/10 main-sequence records with
+    HTTP 200/503/200 and one unchanged app identity; the validator's negative
+    self-test (`checks/selftest-observations.sh`) runs in preflight.
+18. The `safety-review` step exists before `implement-commit` and
+    `checks/safety-review.sh` actually performs every obligation the matrix
+    assigns to it (approved artifacts, dependencies, changed-path scope,
+    .dockerignore, env files, credentials, workflow files).
+19. The matrix no longer attributes dependency, image-exclusion, env or scope
+    review to `implement-commit`; `implement-commit` promises only the staged
+    secret guard, commit, push and clean-tree/origin verification that
+    `checks/commit-push.sh` performs.
+20. RESULT receives all of these evidence paths (toolchain, local, safety review, request
     observations, Docker, fresh checkout, push CI, PR CI, converge/critic/
     resume reports, FR-013 metrics).
 

@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "platform-poc-001"
   name: "PLATFORM-POC-001 remainder (after HUMAN GATE #1)"
-  version: "1.2.5"
+  version: "1.2.6"
   author: "sanches16"
   description: >-
     Plan → tasks → analyze → implement → deterministic verification → CI →
@@ -371,6 +371,11 @@ steps:
     type: shell
     run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
+  - id: safety-review
+    type: shell
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/safety-review.sh" initial'
+    timeout: 300
+
   - id: implement-commit
     type: shell
     run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/commit-push.sh" "feat: implement PLATFORM-POC-001 foundation health (run {{ context.run_id }})"'
@@ -551,6 +556,15 @@ steps:
         type: shell
         run: 'd=.specify/workflows/platform-poc-001; s="$(git status --porcelain --untracked-files=all --ignored -- "$d")"; t="$(git rev-parse "HEAD:$d")"; if [ -z "$s" ] && [ "$t" = "{{ steps.workflow-baseline.output.data.tree }}" ]; then echo "PASS: workflow and verifier unchanged"; else echo "$s"; echo "STOP: workflow/verifier changed after agent step (HEAD tree $t)" >&2; exit 1; fi'
 
+  - id: repair-safety-review
+    type: if
+    condition: "{{ steps.converge-review.output.choice == 'repair' }}"
+    then:
+      - id: repair-safety-review-run
+        type: shell
+        run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/safety-review.sh" repair-1'
+        timeout: 300
+
   - id: repair-commit
     type: if
     condition: "{{ steps.converge-review.output.choice == 'repair' }}"
@@ -657,7 +671,7 @@ steps:
 
   - id: critic-record-link
     type: shell
-    run: 'if [ -s specs/001-foundation-health/reviews/GROK_CRITIC.md ]; then bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC specs/001-foundation-health/reviews/GROK_CRITIC.md && bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" toolchain participated; else bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" report GROK_CRITIC - && bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" toolchain not-performed; fi'
+    run: 'bash "$SPECKIT_WORKFLOW_DIR/checks/record-evidence.sh" critic'
 
   - id: critic-commit
     type: shell

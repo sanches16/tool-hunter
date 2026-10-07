@@ -50,5 +50,8 @@ docker info >/dev/null 2>&1 || fail "Docker engine not running"
 gh auth status >/dev/null 2>&1 || fail "gh not authenticated"
 pass "codex, claude, docker, gh, jq, npm available"
 
+bash "$(dirname "$0")/selftest-observations.sh" >/dev/null || fail "request-evidence validator self-test failed"
+pass "request-evidence validator self-test (1 valid, 13 invalid fixtures)"
+
 mkdir -p .agent-out
 pass "PREFLIGHT"
