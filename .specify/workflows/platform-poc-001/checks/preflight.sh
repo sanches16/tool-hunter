@@ -22,7 +22,8 @@ check_protected_artifacts
 [ "$(jq -r .feature_directory .specify/feature.json)" = "$FEATURE_DIR" ] || fail ".specify/feature.json does not point to $FEATURE_DIR"
 pass "local feature pointer = $FEATURE_DIR (untracked)"
 
-specify version 2>&1 | grep -q '1\.0\.12' || fail "Spec Kit is not 1.0.12"
+speckit_version="$(specify version 2>&1)"
+grep -q '1\.0\.12' <<<"$speckit_version" || fail "Spec Kit is not 1.0.12"
 [ "$(specify integration status --json | jq -r .default_integration)" = "codex" ] || fail "default integration is not codex"
 pass "Spec Kit 1.0.12, default integration codex"
 
