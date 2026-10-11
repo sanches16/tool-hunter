@@ -1,0 +1,9 @@
+# Скопируй этот файл в .agent-loop-smoke/doctor-preflight.txt
+# и замени значения на строки из doctor kit 1.3.1.
+# Само значение token не вставляй. Строки с # можно оставить.
+kit_version: 1.3.1
+dry_run: true
+sandbox_required: true
+token_file: SET
+reviewer: replace-with-app-slug
+headless_permissions_verified: false
