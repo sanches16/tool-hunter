@@ -1,0 +1,16 @@
+---
+description: Tool Hunter project context, current development stage and scope boundaries
+alwaysApply: true
+---
+
+# Tool Hunter context bootstrap
+
+Before substantive Tool Hunter work, read `docs/CURSOR_CONTEXT_RU.md`, the current user request and applicable repository instructions. Read the active constitution, specification, reviewed plan and latest revision-linked decisions. Use `docs/PROJECT_OVERVIEW_RU.md` for product goals, platform history and backlog.
+
+Tool Hunter also develops a reusable multi-agent SDD platform. Snapshot 2026-10-11: runtime work is PLATFORM-POC-001 on `poc/platform-poc-001-incremental`, reviewed SHA `170f838ac583db4de0179450ac3b08c863864e7b`; last accepted slice D3C1, next recorded direction D3C2 fresh-checkout proof. Main contains documentation/setup; runtime has not been promoted. Refresh refs and decisions before acting.
+
+The bottleneck is automation of verification and handoff between Claude and GPT. Latest agent-loop audit reports kit 1.3.1 READY_FOR_SMOKE with dry_run=true and headless permissions unverified. Do not infer live acceptance from installation.
+
+Work only within the current authorized scope. Preserve accepted artifacts. Completion requires reproducible evidence on an identified revision. Keep secrets out of Git and shared output. Follow explicit human promotion authorization; passing CI and roadmap text do not authorize merge, product Iteration 0 or live automation. Do not restart the frozen end-to-end workflow or silently resolve governance conflicts. Product master-spec is reference for after PoC acceptance.
+
+Recover approved scope, current status, evidence, gaps and next action before changes. Do not reconstruct the project from chat memory or replace canonical assets. This rule points to files; read their contents with tools rather than assuming they were automatically inlined.
