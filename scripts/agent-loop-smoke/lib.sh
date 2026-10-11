@@ -76,8 +76,11 @@ smoke_reject_secret_file() {
 smoke_check_reviewer() {
   reviewer="$1"
   case "$reviewer" in
-    ""|pending|PENDING|none|NONE|unknown|UNKNOWN|sanches16|replace-with-app-slug|your-app-slug|*"<"*|*">"*|*[!A-Za-z0-9._-]*)
-      smoke_block "reviewer должен быть slug GitHub App из checklist kit, не логин sanches16 и не пустое значение. Сейчас: ${reviewer:-пусто}"
+    replace-with-app-slug|your-app-slug)
+      smoke_block "В .agent-loop-smoke/doctor-preflight.txt строка reviewer всё ещё заглушка «${reviewer}». Замени её на slug GitHub App. На Mac его печатает: gh api user/installations --jq '.installations[].app_slug'. Если команда ничего не печатает, приложения ещё нет и preflight обязан остановиться. Имя придумывать не нужно. Логин sanches16 сюда не подходит."
+      ;;
+    ""|pending|PENDING|none|NONE|unknown|UNKNOWN|sanches16|*"<"*|*">"*|*[!A-Za-z0-9._-]*)
+      smoke_block "В .agent-loop-smoke/doctor-preflight.txt нужен slug GitHub App из checklist kit. Логин sanches16 и слова pending/none не подходят. Сейчас: ${reviewer:-пусто}"
       ;;
   esac
 }

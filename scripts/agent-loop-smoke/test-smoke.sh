@@ -32,6 +32,7 @@ EOF
 expect_block "секрет в doctor" smoke_check_preflight_doctor "$tmp/secret.txt"
 expect_block "reviewer sanches16" smoke_check_reviewer sanches16
 expect_block "reviewer placeholder" smoke_check_reviewer replace-with-app-slug
+grep -q 'заглушка' /tmp/smoke-err.txt || fail "сообщение про заглушку reviewer"
 
 cat > "$tmp/preflight.txt" <<'EOF'
 kit_version: 1.3.1
