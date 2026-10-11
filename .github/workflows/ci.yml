@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (lint, typecheck, build, test, verify:startup)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Detect project mode
+        id: mode
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f package.json ]]; then
+            echo "runtime=true" >> "$GITHUB_OUTPUT"
+          else
+            if [[ -n "$BASE_SHA" ]] && git cat-file -e "$BASE_SHA:package.json" 2>/dev/null; then
+              echo "::error::package.json was removed from a runtime project"
+              exit 1
+            fi
+            if [[ -n "$(git ls-files -- src tests Dockerfile compose.yaml)" ]]; then
+              echo "::error::Runtime files require package.json and the full verification suite"
+              exit 1
+            fi
+            echo "runtime=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify bootstrap scripts and JSON
+        if: steps.mode.outputs.runtime == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(git ls-files -z -- '*.sh')
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          paths = subprocess.check_output(["git", "ls-files", "-z", "--", "*.json"]).split(b"\0")
+          count = 0
+          for path in paths:
+              if path:
+                  with pathlib.Path(path.decode()).open(encoding="utf-8") as handle:
+                      json.load(handle)
+                  count += 1
+          print(f"Validated {count} tracked JSON files")
+          PY
+          echo "Bootstrap repository: no application manifest or runtime files are present." >> "$GITHUB_STEP_SUMMARY"
+          echo "Shell syntax and JSON checks passed; application checks are not applicable yet." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Node.js 24
+        if: steps.mode.outputs.runtime == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Require Docker and Docker Compose
+        id: prereq
+        if: steps.mode.outputs.runtime == 'true'
+        run: |
+          docker version --format '{{.Server.Version}}'
+          docker compose version --short
+
+      - name: npm ci
+        id: install
+        if: ${{ !cancelled() && steps.mode.outputs.runtime == 'true' }}
+        run: npm ci
+
+      - name: npm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - name: npm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - name: npm run build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
+
+      - name: npm test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prereq.outcome == 'success' }}
+        run: npm test
+
+      - name: npm run verify:startup
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prereq.outcome == 'success' }}
+        run: npm run verify:startup
