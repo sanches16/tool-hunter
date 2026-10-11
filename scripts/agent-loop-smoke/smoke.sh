@@ -152,6 +152,7 @@ cmd_create_pr() {
   git -C "$work" diff --check HEAD^ HEAD
   HEAD_SHA="$(git -C "$work" rev-parse HEAD)"
   git -C "$work" push -u "$SMOKE_REMOTE" "$SMOKE_HEAD_BRANCH"
+  mkdir -p "$(smoke_state_dir)"
   body_file="$(smoke_state_dir)/pr-body.txt"
   cat > "$body_file" <<EOF
 Throwaway mailbox for AGENT-LOOP $SMOKE_ITERATION.
