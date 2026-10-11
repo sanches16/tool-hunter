@@ -143,6 +143,12 @@ if [ -n "$body_file" ]; then
   cp "$body_file" "${GH_BODIES}/body-${count}.txt"
 fi
 case "$1" in
+  repo)
+    case "$2" in
+      view) printf 'sanches16/tool-hunter\n' ;;
+      *) printf 'unexpected repo %s\n' "$2" >&2; exit 1 ;;
+    esac
+    ;;
   api)
     case "$2" in
       user) printf 'sanches16\n' ;;

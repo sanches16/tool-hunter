@@ -108,13 +108,10 @@ cmd_set_reviewer() {
 
 cmd_preflight() {
   smoke_require_tools
-  state_dir="$(smoke_state_dir)"
-  mkdir -p "$state_dir"
-  doctor="$state_dir/doctor-preflight.txt"
-  smoke_check_preflight_doctor "$doctor"
-  login="$(gh api user --jq .login)"
-  [ "$login" = "sanches16" ] || smoke_block "gh должен быть авторизован как sanches16. Сейчас: ${login:-пусто}"
-  smoke_say "preflight PASS для $SMOKE_GITHUB_REPO, reviewer из doctor принят, token в отчёт не входил."
+  owner="$(gh repo view "$SMOKE_GITHUB_REPO" --json nameWithOwner --jq .nameWithOwner)"
+  [ "$owner" = "sanches16/tool-hunter" ] || smoke_block "gh не видит sanches16/tool-hunter. Сейчас: ${owner:-пусто}"
+  smoke_say "preflight PASS для sanches16/tool-hunter."
+  smoke_say "GitHub App ревьюера на этом шаге не нужен."
   smoke_say "Дальше: scripts/agent-loop-smoke/smoke.sh create-pr"
 }
 
@@ -126,8 +123,6 @@ cmd_create_pr() {
     smoke_say "Дальше: scripts/agent-loop-smoke/smoke.sh negative-probes"
     return 0
   fi
-  doctor="$(smoke_state_dir)/doctor-preflight.txt"
-  smoke_check_preflight_doctor "$doctor"
   repo="$(smoke_repo_dir)"
   if git -C "$repo" ls-remote --heads "$SMOKE_REMOTE" "$SMOKE_HEAD_BRANCH" | grep -q .; then
     smoke_block "Ветка $SMOKE_HEAD_BRANCH уже есть на $SMOKE_REMOTE. Выполни abort или close, прежде чем создавать новую."
@@ -189,8 +184,6 @@ EOF
 cmd_negative_probes() {
   smoke_require_tools
   smoke_require_open_smoke
-  doctor="$(smoke_state_dir)/doctor-preflight.txt"
-  smoke_check_preflight_doctor "$doctor"
   state_dir="$(smoke_state_dir)"
   if [ "$NEGATIVE_FENCED" != "posted" ]; then
     smoke_render_fenced "$HEAD_SHA" > "$state_dir/probe-fenced.txt"

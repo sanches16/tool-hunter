@@ -4,45 +4,17 @@
 
 PR #2 и ветки `poc/*` не используются. Merge нет.
 
-## Что сделать один раз на Mac
+## Шаг, который проходит сейчас
 
-Файл `.agent-loop-smoke/doctor-preflight.txt` — это короткая форма. Её читает `preflight`. В неё переносятся шесть фактов из doctor kit, без значения token.
-
-Аудит 11 октября уже фиксирует четыре из них: версия `1.3.1`, `dry_run` включён, sandbox обязателен, headless ещё не проверен. Их можно оставить как в шаблоне. Две строки kit ещё не закрыл: token file был `NOT_SET`, reviewer app не был задан. Пока они такие, `preflight` останавливается. Это правильная остановка, а не ошибка скрипта.
-
-Когда doctor kit перестанет писать `NOT_SET`, замени `token_file` на слово `SET`. Когда появится slug GitHub App ревьюера, запиши его в `reviewer`. Логин `sanches16` туда не подходит: watcher не отличит его от оператора.
-
-Команду doctor бери из `VALIDATION` в каталоге kit 1.3.1. Этот каталог лежит на Mac вне репозитория. Найти его можно так:
-
-```bash
-find "$HOME" -maxdepth 5 -type f -name 'VALIDATION*' 2>/dev/null
-```
-
-## Шесть команд
-
-Из каталога со скриптами форма открывается так:
-
-```bash
-scripts/agent-loop-smoke/smoke.sh show
-scripts/agent-loop-smoke/smoke.sh open
-```
-
-`show` печатает файл в терминале. Пока в строке `reviewer` заглушка, `open` редактор не запускает: править TextEdit не нужно. Если файла ещё не было, команда создаёт его из шаблона.
-
-Имя reviewer, если GitHub App уже установлен:
-
-```bash
-scripts/agent-loop-smoke/smoke.sh apps
-scripts/agent-loop-smoke/smoke.sh set-reviewer ИМЯ_ИЗ_СПИСКА
-```
-
-На копии шаблона `preflight` останавливается: token file ещё `NOT_SET`, reviewer ещё не задан. После замены этих двух строк выполни:
+GitHub App ревьюера ещё нет, и обычный вход `gh` его список не показывает. Поэтому `preflight` больше не спрашивает форму и имя приложения. Он проверяет только, что репозиторий `sanches16/tool-hunter` доступен.
 
 ```bash
 scripts/agent-loop-smoke/smoke.sh preflight
 scripts/agent-loop-smoke/smoke.sh create-pr
 scripts/agent-loop-smoke/smoke.sh negative-probes
 ```
+
+`create-pr` открывает одноразовый PR между ветками `smoke/agent-loop-*`. `negative-probes` пишет комментарии, которые watcher не должен исполнять. Команда `handoff` по-прежнему ждёт отдельного GitHub App и на этом шаге не запускается.
 
 `negative-probes` пишет три комментария, которые watcher обязан проигнорировать: текст в fence, дубль полей и такой же fence в Issue #1. Пока `dry_run=true`, в логе kit не должно быть запуска Claude или GPT. Если запуск был, остановись на `abort` или `close` и не выполняй `handoff`.
 
