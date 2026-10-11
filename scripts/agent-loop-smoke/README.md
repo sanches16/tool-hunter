@@ -27,7 +27,7 @@ scripts/agent-loop-smoke/smoke.sh show
 scripts/agent-loop-smoke/smoke.sh open
 ```
 
-`show` печатает файл в терминале. `open` на Mac открывает его в TextEdit. Если файла ещё не было, обе команды создают его из шаблона.
+`show` печатает файл в терминале. Пока в строке `reviewer` заглушка, `open` редактор не запускает: править TextEdit не нужно. Если файла ещё не было, команда создаёт его из шаблона.
 
 Имя reviewer, если GitHub App уже установлен:
 

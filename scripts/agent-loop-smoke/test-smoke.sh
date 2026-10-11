@@ -88,16 +88,36 @@ EOF
   export SMOKE_OPEN_CMD="$tmp/fake-open"
   "$SCRIPT" show > "$tmp/show.txt"
   "$SCRIPT" open > "$tmp/open.txt"
+  if [ -f "$SMOKE_OPEN_LOG" ]; then
+    echo "open вызвал редактор для заглушки" >&2
+    exit 1
+  fi
   "$SCRIPT" set-reviewer smoke-reviewer-app > "$tmp/set-reviewer.txt"
-)
+  "$SCRIPT" open > "$tmp/open-ready.txt"
+) || fail "show/open"
 grep -q 'doctor-preflight.txt' "$tmp/show.txt" || fail "show не показал путь"
 grep -q 'reviewer: pending' "$tmp/show.txt" || fail "show не создал форму"
-grep -q 'doctor-preflight.txt' "$tmp/opened.txt" || fail "open не открыл файл"
+grep -q 'Редактор не открываю' "$tmp/open.txt" || fail "open открыл заглушку"
+grep -q 'doctor-preflight.txt' "$tmp/opened.txt" || fail "open не открыл файл после настоящего имени"
 grep -q 'reviewer: smoke-reviewer-app' "$show_repo/.agent-loop-smoke/doctor-preflight.txt" || fail "set-reviewer не записал имя"
 if SMOKE_REPO_DIR="$show_repo" "$SCRIPT" set-reviewer replace-with-app-slug >/tmp/set-bad.txt 2>&1; then
   fail "set-reviewer принял заглушку"
 fi
 printf 'ok show open set-reviewer\n'
+
+apps_bin="$tmp/bin403"
+mkdir -p "$apps_bin" "$tmp/appsrepo"
+cat > "$apps_bin/gh" << 'EOF'
+#!/bin/bash
+echo 'You must authenticate with an access token authorized to a GitHub App in order to list installations (HTTP 403)' >&2
+exit 1
+EOF
+chmod +x "$apps_bin/gh"
+if PATH="$apps_bin:$PATH" SMOKE_REPO_DIR="$tmp/appsrepo" "$SCRIPT" apps >/tmp/apps-out.txt 2>/tmp/apps-err.txt; then
+  fail "apps при 403 должен остановиться"
+fi
+grep -q '403' /tmp/apps-err.txt || fail "apps не объяснил 403"
+printf 'ok apps 403\n'
 
 bin="$tmp/bin"
 mkdir -p "$bin" "$tmp/bodies"

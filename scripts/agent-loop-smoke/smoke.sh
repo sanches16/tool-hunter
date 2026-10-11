@@ -40,15 +40,23 @@ cmd_show() {
   smoke_say "Строка reviewer сейчас: ${reviewer:-пусто}"
   case "$reviewer" in
     ""|pending|PENDING|replace-with-app-slug|your-app-slug|sanches16)
-      smoke_say "Эту строку ещё нужно заменить. Список имён: scripts/agent-loop-smoke/smoke.sh apps"
-      smoke_say "Записать имя: scripts/agent-loop-smoke/smoke.sh set-reviewer ИМЯ"
-      smoke_say "Открыть файл в редакторе: scripts/agent-loop-smoke/smoke.sh open"
+      smoke_say "Это заглушка из шаблона. Вручную её заменять не нужно, и TextEdit можно закрыть без сохранения."
+      smoke_say "Строка token_file: SET в этом же шаблоне ещё не значит, что файл token создан."
+      smoke_say "Пока в kit нет GitHub App для ревьюера, preflight обязан останавливаться."
       ;;
   esac
 }
 
 cmd_open() {
   file="$(smoke_ensure_preflight_file)"
+  reviewer="$(smoke_field_value "$file" reviewer)"
+  case "$reviewer" in
+    ""|pending|PENDING|replace-with-app-slug|your-app-slug|sanches16)
+      cmd_show
+      smoke_say "Редактор не открываю: сейчас в строке reviewer нечего исправлять."
+      return 0
+      ;;
+  esac
   cmd_show
   if [ -n "${SMOKE_OPEN_CMD:-}" ]; then
     "$SMOKE_OPEN_CMD" "$file"
@@ -73,7 +81,14 @@ cmd_open() {
 
 cmd_apps() {
   smoke_require_tools
-  slugs="$(gh api user/installations --jq '.installations[].app_slug')"
+  err="$(smoke_state_dir)/apps.err"
+  mkdir -p "$(smoke_state_dir)"
+  if ! slugs="$(gh api user/installations --jq '.installations[].app_slug' 2>"$err")"; then
+    if grep -q '403' "$err"; then
+      smoke_block "Обычный вход gh не может показать список GitHub App, сервер ответил 403. Это ограничение входа, не ошибка формы. Аудит kit от 11 октября говорит, что reviewer app ещё не создан. Строку reviewer заполнять нечем. TextEdit закрой без сохранения."
+    fi
+    smoke_die "Не удалось получить список GitHub App. Текст ошибки записан в $err"
+  fi
   if [ -z "$slugs" ]; then
     smoke_block "GitHub App не найден. Пока его нет, строку reviewer заполнять нечем и preflight обязан останавливаться."
   fi
