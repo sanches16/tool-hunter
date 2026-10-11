@@ -1,0 +1,12 @@
+# Это форма, не отчёт kit. Скопируй её в .agent-loop-smoke/doctor-preflight.txt.
+# Значение token сюда не вставляй. Строки с # можно оставить.
+#
+# Ниже состояние аудита 11 октября 2026. preflight на этой копии останавливается.
+# Это ожидаемо: token file ещё NOT_SET, reviewer app ещё не задан.
+# Меняй строку только после того, как doctor kit показал новое значение.
+kit_version: 1.3.1
+dry_run: true
+sandbox_required: true
+token_file: NOT_SET
+reviewer: pending
+headless_permissions_verified: false

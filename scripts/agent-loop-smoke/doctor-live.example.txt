@@ -1,0 +1,11 @@
+# Скопируй этот файл в .agent-loop-smoke/doctor-live.txt
+# только после того, как kit смотрит единственный smoke PR и dry_run для него выключен.
+# live_target_pr замени на номер PR из вывода create-pr. PR #2 запрещён.
+# Само значение token не вставляй.
+kit_version: 1.3.1
+dry_run: false
+sandbox_required: true
+token_file: SET
+reviewer: replace-with-app-slug
+headless_permissions_verified: true
+live_target_pr: 0

@@ -20,6 +20,7 @@
 - [PR #2](https://github.com/sanches16/tool-hunter/pull/2) открыт и не слит; его base — `poc/platform-poc-001`, не main.
 - Последний принятый срез — D3C1; следующий записанный шаг — D3C2, fresh checkout proof без изменений исходников. Final PoC acceptance ещё не подтверждён.
 - Главная текущая трудность платформы — автоматизация проверки и передачи шагов **между Claude и GPT**. Экспериментальный workflow 1.2.6 заморожен; agent-loop kit 1.3.1 дошёл до `READY_FOR_SMOKE` в dry-run. Полный live round-trip ещё не доказан.
+- Пошаговые команды одноразового smoke-круга, без запуска моделей из репозитория: [scripts/agent-loop-smoke/README.md](scripts/agent-loop-smoke/README.md).
 - В main опубликованы документы и reference-источники. Runtime приложения здесь пока отсутствует; эта публикация не сливает PoC и не запускает следующую итерацию.
 
 ## Откуда взялась платформа

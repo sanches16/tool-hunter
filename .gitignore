@@ -8,3 +8,6 @@
 
 # macOS
 .DS_Store
+
+# Local mailbox state for scripts/agent-loop-smoke. Never commit doctor reports.
+.agent-loop-smoke/
