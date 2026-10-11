@@ -1,9 +1,12 @@
-# Скопируй этот файл в .agent-loop-smoke/doctor-preflight.txt
-# и замени значения на строки из doctor kit 1.3.1.
-# Само значение token не вставляй. Строки с # можно оставить.
+# Это форма, не отчёт kit. Скопируй её в .agent-loop-smoke/doctor-preflight.txt.
+# Значение token сюда не вставляй. Строки с # можно оставить.
+#
+# Ниже состояние аудита 11 октября 2026. preflight на этой копии останавливается.
+# Это ожидаемо: token file ещё NOT_SET, reviewer app ещё не задан.
+# Меняй строку только после того, как doctor kit показал новое значение.
 kit_version: 1.3.1
 dry_run: true
 sandbox_required: true
-token_file: SET
-reviewer: replace-with-app-slug
+token_file: NOT_SET
+reviewer: pending
 headless_permissions_verified: false

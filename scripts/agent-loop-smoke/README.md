@@ -6,22 +6,28 @@ PR #2 и ветки `poc/*` не используются. Merge нет.
 
 ## Что сделать один раз на Mac
 
-В каталоге kit 1.3.1 выполни doctor так, как написано в его `VALIDATION`.
+Файл `.agent-loop-smoke/doctor-preflight.txt` — это короткая форма. Её читает `preflight`. В неё переносятся шесть фактов из doctor kit, без значения token.
 
-Сохрани отчёт в текстовый файл без значения token. В отчёте должны появиться свои строки `kit_version`, `dry_run`, `sandbox_required`, `token_file`, `reviewer`, `headless_permissions_verified`. Reviewer — slug GitHub App из checklist kit. Логин `sanches16` watcher не отличит от оператора.
+Аудит 11 октября уже фиксирует четыре из них: версия `1.3.1`, `dry_run` включён, sandbox обязателен, headless ещё не проверен. Их можно оставить как в шаблоне. Две строки kit ещё не закрыл: token file был `NOT_SET`, reviewer app не был задан. Пока они такие, `preflight` останавливается. Это правильная остановка, а не ошибка скрипта.
 
-Пока `token_file` не `SET`, а reviewer не задан, следующие команды остановятся.
+Когда doctor kit перестанет писать `NOT_SET`, замени `token_file` на слово `SET`. Когда появится slug GitHub App ревьюера, запиши его в `reviewer`. Логин `sanches16` туда не подходит: watcher не отличит его от оператора.
+
+Команду doctor бери из `VALIDATION` в каталоге kit 1.3.1. Этот каталог лежит на Mac вне репозитория. Найти его можно так:
+
+```bash
+find "$HOME" -maxdepth 5 -type f -name 'VALIDATION*' 2>/dev/null
+```
 
 ## Шесть команд
 
-Из клона `~/Projects/tool-hunter`:
+Из каталога со скриптами:
 
 ```bash
 mkdir -p .agent-loop-smoke
 cp scripts/agent-loop-smoke/doctor-preflight.example.txt .agent-loop-smoke/doctor-preflight.txt
 ```
 
-Открой `.agent-loop-smoke/doctor-preflight.txt` и подставь фактические значения doctor. Затем:
+На копии шаблона `preflight` должен остановиться из-за `token_file: NOT_SET`. После двух замен из doctor выполни:
 
 ```bash
 scripts/agent-loop-smoke/smoke.sh preflight
@@ -37,7 +43,7 @@ scripts/agent-loop-smoke/smoke.sh negative-probes
 cp scripts/agent-loop-smoke/doctor-live.example.txt .agent-loop-smoke/doctor-live.txt
 ```
 
-Впиши фактические значения и номер PR в `live_target_pr`. Затем:
+В `doctor-live.txt` поставь `dry_run: false`, `headless_permissions_verified: true`, тот же `reviewer` и номер PR из вывода `create-pr` в `live_target_pr`. Затем:
 
 ```bash
 SMOKE_LIVE_HANDOFF=yes scripts/agent-loop-smoke/smoke.sh handoff
