@@ -280,6 +280,33 @@ smoke_classify_comment() {
   printf 'other\n'
 }
 
+smoke_preflight_file() {
+  printf '%s/doctor-preflight.txt\n' "$(smoke_state_dir)"
+}
+
+smoke_ensure_preflight_file() {
+  dest="$(smoke_preflight_file)"
+  mkdir -p "$(dirname "$dest")"
+  if [ ! -f "$dest" ]; then
+    example="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/doctor-preflight.example.txt"
+    cp "$example" "$dest"
+  fi
+  printf '%s\n' "$dest"
+}
+
+smoke_set_reviewer_line() {
+  file="$1"
+  slug="$2"
+  smoke_check_reviewer "$slug"
+  tmp="$(mktemp)"
+  awk -v slug="$slug" '
+    /^reviewer:/ { print "reviewer: " slug; found=1; next }
+    { print }
+    END { if (!found) print "reviewer: " slug }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
 smoke_require_open_smoke() {
   smoke_load_state
   [ -n "$SMOKE_PR" ] || smoke_block "Сначала выполни create-pr"

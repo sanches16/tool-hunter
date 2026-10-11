@@ -75,6 +75,30 @@ if grep -v '^#' "$ROOT/scripts/agent-loop-smoke/smoke.sh" "$ROOT/scripts/agent-l
 fi
 printf 'ok script stays a mailbox\n'
 
+show_repo="$tmp/showrepo"
+mkdir -p "$show_repo"
+(
+  export SMOKE_REPO_DIR="$show_repo"
+  export SMOKE_OPEN_LOG="$tmp/opened.txt"
+  cat > "$tmp/fake-open" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$1" > "${SMOKE_OPEN_LOG:?}"
+EOF
+  chmod +x "$tmp/fake-open"
+  export SMOKE_OPEN_CMD="$tmp/fake-open"
+  "$SCRIPT" show > "$tmp/show.txt"
+  "$SCRIPT" open > "$tmp/open.txt"
+  "$SCRIPT" set-reviewer smoke-reviewer-app > "$tmp/set-reviewer.txt"
+)
+grep -q 'doctor-preflight.txt' "$tmp/show.txt" || fail "show не показал путь"
+grep -q 'reviewer: pending' "$tmp/show.txt" || fail "show не создал форму"
+grep -q 'doctor-preflight.txt' "$tmp/opened.txt" || fail "open не открыл файл"
+grep -q 'reviewer: smoke-reviewer-app' "$show_repo/.agent-loop-smoke/doctor-preflight.txt" || fail "set-reviewer не записал имя"
+if SMOKE_REPO_DIR="$show_repo" "$SCRIPT" set-reviewer replace-with-app-slug >/tmp/set-bad.txt 2>&1; then
+  fail "set-reviewer принял заглушку"
+fi
+printf 'ok show open set-reviewer\n'
+
 bin="$tmp/bin"
 mkdir -p "$bin" "$tmp/bodies"
 cat > "$bin/gh" <<'EOF'

@@ -11,6 +11,10 @@ usage() {
   cat <<'EOF'
 Почтовый ящик одного smoke-круга. Watcher по-прежнему kit 1.3.1 на Mac.
 
+  scripts/agent-loop-smoke/smoke.sh show
+  scripts/agent-loop-smoke/smoke.sh open
+  scripts/agent-loop-smoke/smoke.sh apps
+  scripts/agent-loop-smoke/smoke.sh set-reviewer ИМЯ
   scripts/agent-loop-smoke/smoke.sh preflight
   scripts/agent-loop-smoke/smoke.sh create-pr
   scripts/agent-loop-smoke/smoke.sh negative-probes
@@ -23,6 +27,68 @@ usage() {
 PR #2 и ветки poc/* не используются. Скрипт не публикует REVIEW_DECISION:
 это делает reviewer через kit.
 EOF
+}
+
+cmd_show() {
+  file="$(smoke_ensure_preflight_file)"
+  reviewer="$(smoke_field_value "$file" reviewer)"
+  smoke_say "Файл формы:"
+  smoke_say "$file"
+  smoke_say "-----"
+  cat -n "$file"
+  smoke_say "-----"
+  smoke_say "Строка reviewer сейчас: ${reviewer:-пусто}"
+  case "$reviewer" in
+    ""|pending|PENDING|replace-with-app-slug|your-app-slug|sanches16)
+      smoke_say "Эту строку ещё нужно заменить. Список имён: scripts/agent-loop-smoke/smoke.sh apps"
+      smoke_say "Записать имя: scripts/agent-loop-smoke/smoke.sh set-reviewer ИМЯ"
+      smoke_say "Открыть файл в редакторе: scripts/agent-loop-smoke/smoke.sh open"
+      ;;
+  esac
+}
+
+cmd_open() {
+  file="$(smoke_ensure_preflight_file)"
+  cmd_show
+  if [ -n "${SMOKE_OPEN_CMD:-}" ]; then
+    "$SMOKE_OPEN_CMD" "$file"
+    smoke_say "Открыл файл командой SMOKE_OPEN_CMD."
+    return 0
+  fi
+  if command -v open >/dev/null 2>&1; then
+    open -e "$file"
+    smoke_say "Открыл файл в TextEdit. После правки сохрани его клавишами Cmd+S."
+    return 0
+  fi
+  if [ -n "${EDITOR:-}" ]; then
+    "$EDITOR" "$file"
+    return 0
+  fi
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$file"
+    return 0
+  fi
+  smoke_say "Отдельный редактор не найден. Текст файла напечатан выше."
+}
+
+cmd_apps() {
+  smoke_require_tools
+  slugs="$(gh api user/installations --jq '.installations[].app_slug')"
+  if [ -z "$slugs" ]; then
+    smoke_block "GitHub App не найден. Пока его нет, строку reviewer заполнять нечем и preflight обязан останавливаться."
+  fi
+  smoke_say "Имена, которые можно записать в reviewer:"
+  printf '%s\n' "$slugs"
+  smoke_say "Дальше: scripts/agent-loop-smoke/smoke.sh set-reviewer ИМЯ"
+}
+
+cmd_set_reviewer() {
+  slug="${1:-}"
+  [ -n "$slug" ] || smoke_block "Напиши имя сразу после команды: scripts/agent-loop-smoke/smoke.sh set-reviewer ИМЯ"
+  file="$(smoke_ensure_preflight_file)"
+  smoke_set_reviewer_line "$file" "$slug"
+  smoke_say "Записал в $file строку reviewer: $slug"
+  smoke_say "Дальше: scripts/agent-loop-smoke/smoke.sh preflight"
 }
 
 cmd_preflight() {
@@ -329,6 +395,10 @@ command_name="${1:-help}"
 shift || true
 case "$command_name" in
   help|-h|--help) usage ;;
+  show) cmd_show ;;
+  open) cmd_open ;;
+  apps) cmd_apps ;;
+  set-reviewer) cmd_set_reviewer "${1:-}" ;;
   preflight) cmd_preflight ;;
   create-pr) cmd_create_pr ;;
   negative-probes) cmd_negative_probes ;;

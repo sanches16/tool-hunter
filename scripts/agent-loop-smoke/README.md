@@ -20,14 +20,23 @@ find "$HOME" -maxdepth 5 -type f -name 'VALIDATION*' 2>/dev/null
 
 ## Шесть команд
 
-Из каталога со скриптами:
+Из каталога со скриптами форма открывается так:
 
 ```bash
-mkdir -p .agent-loop-smoke
-cp scripts/agent-loop-smoke/doctor-preflight.example.txt .agent-loop-smoke/doctor-preflight.txt
+scripts/agent-loop-smoke/smoke.sh show
+scripts/agent-loop-smoke/smoke.sh open
 ```
 
-На копии шаблона `preflight` должен остановиться из-за `token_file: NOT_SET`. После двух замен из doctor выполни:
+`show` печатает файл в терминале. `open` на Mac открывает его в TextEdit. Если файла ещё не было, обе команды создают его из шаблона.
+
+Имя reviewer, если GitHub App уже установлен:
+
+```bash
+scripts/agent-loop-smoke/smoke.sh apps
+scripts/agent-loop-smoke/smoke.sh set-reviewer ИМЯ_ИЗ_СПИСКА
+```
+
+На копии шаблона `preflight` останавливается: token file ещё `NOT_SET`, reviewer ещё не задан. После замены этих двух строк выполни:
 
 ```bash
 scripts/agent-loop-smoke/smoke.sh preflight
